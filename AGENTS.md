@@ -45,3 +45,8 @@ We want modern Python style with a preference for dataclasses and object oriente
 
 Avoid creating a lot of top-level functions when the logic is associated with it's data and should be on the class.
 
+
+## Python pytest Tests
+
+Tests should be pytest style and class based.  That is, tests should usually be methods on a test
+class, not top-level module functions.

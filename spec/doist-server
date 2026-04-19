@@ -1,0 +1,128 @@
+#!/usr/bin/env python
+# mise description="Doist on server, see --help for more"
+from os import environ
+from pathlib import Path
+
+import click
+
+from doist.libs.utils import sub_run
+
+
+PROJ_DPATH = Path(__file__).parent.parent
+
+
+def docker(*args, **kwargs):
+    args = ('docker', '--context', 'server', *args)
+    return sub_run(args=args, cwd=PROJ_DPATH, check=False, **kwargs)
+
+
+def compose(*args, **kwargs):
+    args = ('compose', '--file=docker-compose.yaml', '--file=docker-compose.server.yaml', *args)
+    return docker(*args, **kwargs)
+
+
+def psql(*args, **kwargs):
+    args = ('exec', 'db', 'psql', '-U', 'postgres', '-c', *args)
+    compose(*args, **kwargs)
+
+
+@click.group()
+def cli():
+    pass
+
+
+@cli.command()
+def deploy():
+    """
+    Deploy using docker compose
+    """
+    if not environ.get('TODOIST_API_TOKEN'):
+        print('ERROR: environment variable TODOIST_API_TOKEN not set')
+        return
+
+    compose('up', 'db', '--pull=always', '-d', '--remove-orphans', '--force-recreate')
+    compose('build', '--pull', 'app', 'schedule')
+    compose('run', '--rm', 'app', 'db', 'init', '--drop-first')
+    compose('run', '--rm', 'app', 'db', 'create-all')
+
+    compose(
+        'up',
+        'app',
+        'schedule',
+        '-d',
+        '--remove-orphans',
+        '--force-recreate',
+    )
+    docker('image', 'prune', '--force')
+
+
+@cli.command('compose', context_settings={'ignore_unknown_options': True, 'allow_extra_args': True})
+@click.pass_context
+def _compose(ctx: click.Context):
+    """
+    Run docker compose commands on server
+    """
+    compose(*ctx.args)
+
+
+@cli.command()
+def bash():
+    """
+    Bash prompt in the running app container
+    """
+    compose('exec', 'app', 'bash')
+
+
+@cli.command(context_settings={'ignore_unknown_options': True, 'allow_extra_args': True})
+@click.pass_context
+def doist(ctx: click.Context):
+    """
+    Run doist command in running app container
+    """
+    compose('exec', 'app', 'uv', 'run', 'doist', *ctx.args)
+
+
+@cli.command()
+@click.argument('apps', nargs=-1, type=click.Choice(('app', 'db', 'schedule')))
+@click.option('--since', default='1h')
+@click.option('--ts/--no-ts', default=True)
+@click.option('--follow', is_flag=True)
+@click.pass_context
+def logs(ctx: click.Context, apps: tuple[str], since: str, ts: bool, follow: bool):
+    """
+    Docker compose logs
+    """
+    compose_args = ['logs', *ctx.args, *apps]
+    if since != 'all':
+        compose_args += ('--since', since)
+    if ts:
+        compose_args += ('--timestamps',)
+    if follow:
+        compose_args += ('--follow',)
+
+    compose(*compose_args)
+
+
+@cli.group()
+def db():
+    "(group)"
+
+
+@db.command()
+def databases():
+    """
+    List databases
+    """
+    psql('\\list')
+
+
+@db.command()
+def tables():
+    """
+    List database tables
+    """
+    psql('\\dt', '-d', 'doist')
+
+
+if __name__ == '__main__':
+    cli()

@@ -12,6 +12,8 @@ imports.
 
 import warnings
 
+import pytest
+
 
 # Treat any warning issued in a test as an exception so we are forced to explicitly handle or
 # ignore it.
@@ -48,3 +50,20 @@ def pytest_configure(config):
             ':wtforms.meta',
         )
     """
+
+    config.addinivalue_line(
+        'markers',
+        'integration: integration tests that only run when selected with -m integration',
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if 'integration' in (config.option.markexpr or ''):
+        return
+
+    skip_integration = pytest.mark.skip(
+        reason='integration tests only run when selected with -m integration',
+    )
+    for item in items:
+        if 'integration' in item.keywords:
+            item.add_marker(skip_integration)

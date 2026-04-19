@@ -20,6 +20,7 @@ class Deploy:
         dirty = self.is_dirty_worktree()
         self.ensure_dirty_allowed(dirty)
         image_ref = self.image_ref(dirty)
+        compose_env = self.compose_env(image_ref)
 
         click.echo(f'Loaded lexe config for {self.config.app_name} ({self.config.vm_host_name}).')
         click.echo(f'Deploying {image_ref} to {self.remote_host}.')
@@ -42,7 +43,7 @@ class Deploy:
             '--force-recreate',
             '--remove-orphans',
             cwd=self.app_dpath,
-            env=self.compose_env(image_ref),
+            env=compose_env,
         )
 
         click.echo('Remote compose status:')
@@ -52,7 +53,7 @@ class Deploy:
             'ps',
             capture=True,
             cwd=self.app_dpath,
-            env=self.compose_env(image_ref),
+            env=compose_env,
         )
         if result.stdout:
             click.echo(result.stdout.rstrip())
@@ -80,7 +81,11 @@ class Deploy:
 
     def image_ref(self, dirty: bool) -> str:
         commit_sha = sub_run(
-            'git', 'rev-parse', 'HEAD', capture=True, cwd=self.app_dpath
+            'git',
+            'rev-parse',
+            'HEAD',
+            capture=True,
+            cwd=self.app_dpath,
         ).stdout.strip()
         release_tag = f'v{date.today().isoformat()}-{commit_sha[:7]}'
         if dirty:

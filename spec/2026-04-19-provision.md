@@ -14,7 +14,7 @@
 - [x] Define how `public-service` maps to exe.dev public exposure behavior
 - [x] Define destroy behavior for existing vs missing VMs
 - [x] Validate the hello example through a full provision/destroy lifecycle
-- [ ] Define the idempotent post-create Docker prep required for unregistry
+- [x] Define the idempotent post-create Docker prep required for unregistry
 - [ ] Define how existing Ubuntu 24.04 setup/hardening scripts plug into provision
 
 ## References
@@ -36,6 +36,7 @@ For now, the implemented config surface is intentionally narrow and only covers:
 - `vm-host-name` is the single VM identity used by both `provision` and `destroy`.
 - `provision` is idempotent for an existing VM and continues to verify SSH reachability and Docker.
 - `provision` must idempotently ensure Docker is using the containerd image store before deploy can rely on unregistry.
+- The first direct VM SSH from `provision` accepts the host key into the user's normal SSH known-hosts file.
 - `destroy` is idempotent: if the VM is already absent, it reports that state and exits successfully.
 - `public-service` only affects `provision`; `destroy` simply removes the whole VM.
 - Provision currently relies on the underlying tooling to surface missing local command failures directly.
@@ -48,8 +49,4 @@ For now, the implemented config surface is intentionally narrow and only covers:
   provision again, confirm presence, then destroy again.
 - Confirmed Docker's documented requirement to enable the containerd image store for upgraded daemons and unregistry's
   expectation that Docker use that shared image store.
-
-
-## Todos
-
-- VM prep (for unregistry): https://docs.docker.com/engine/storage/containerd/#enable-containerd-image-store-on-docker-engine
+- Confirmed the hello integration flow now relies on `provision` to establish the first trusted direct SSH connection to the VM before deploy.

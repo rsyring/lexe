@@ -22,7 +22,6 @@ class ExeDevVm:
 class ExeDev:
     wait_timeout_seconds: int = 120
     wait_interval_seconds: int = 2
-    ssh_known_hosts_fpath: Path | None = None
 
     def list_vms(self) -> dict[str, ExeDevVm]:
         result = ssh('exe.dev', 'ls', '--json', capture=True)
@@ -43,14 +42,9 @@ class ExeDev:
         return f'{vm_name}.exe.xyz'
 
     def host_ssh(self, vm_name: str, *args, **kwargs):
-        if self.ssh_known_hosts_fpath is None:
-            raise click.ClickException('ssh_known_hosts_fpath is not configured')
-        self.ssh_known_hosts_fpath.parent.mkdir(parents=True, exist_ok=True)
         return ssh(
             '-o',
             'StrictHostKeyChecking=accept-new',
-            '-o',
-            f'UserKnownHostsFile={self.ssh_known_hosts_fpath}',
             self.vm_ssh_dest(vm_name),
             *args,
             **kwargs,
@@ -165,10 +159,6 @@ class Provision:
     config: LexeConfig
     app_dpath: Path
     exe_dev: ExeDev = field(default_factory=ExeDev)
-
-    def __post_init__(self) -> None:
-        if self.exe_dev.ssh_known_hosts_fpath is None:
-            self.exe_dev.ssh_known_hosts_fpath = self.app_dpath / 'deploy' / 'ssh_known_hosts'
 
     def run(self) -> None:
         click.echo(f'Loaded lexe config for {self.config.app_name} ({self.config.vm_host_name}).')

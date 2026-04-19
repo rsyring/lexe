@@ -7,15 +7,11 @@ from lexe.config import LexeConfig
 from lexe.provision import Destroy, ExeDev, Provision
 
 
-KNOWN_HOSTS_FPATH = Path('/tmp/lexe-known-hosts-test')
-
-
 @dataclass
 class FakeExeDev:
     ensure_vm_result: bool = False
     ensure_containerd_image_store_result: bool = False
     destroy_vm_result: bool = False
-    ssh_known_hosts_fpath: Path | None = None
     calls: list[tuple[str, str]] = field(default_factory=list)
 
     def ensure_vm(self, vm_name: str) -> bool:
@@ -71,7 +67,6 @@ class TestProvision:
             'Enabling public HTTP proxy for service: web\n'
             'Provision complete.\n'
         )
-        assert provision.exe_dev.ssh_known_hosts_fpath == Path('/repo/app/deploy/ssh_known_hosts')
 
     def test_run_when_containerd_image_store_already_enabled(self, capsys):
         config = LexeConfig(app_name='demo', vm_host_name='demo-vm', public_service=None)
@@ -158,11 +153,7 @@ class TestExeDev:
         monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
         monkeypatch.setattr('lexe.provision.time.sleep', int)
 
-        ExeDev(
-            wait_timeout_seconds=1,
-            wait_interval_seconds=0,
-            ssh_known_hosts_fpath=KNOWN_HOSTS_FPATH,
-        ).wait_for_ssh('demo-vm')
+        ExeDev(wait_timeout_seconds=1, wait_interval_seconds=0).wait_for_ssh('demo-vm')
 
         assert len(calls) == 2
         assert all(
@@ -170,8 +161,6 @@ class TestExeDev:
             == (
                 '-o',
                 'StrictHostKeyChecking=accept-new',
-                '-o',
-                f'UserKnownHostsFile={KNOWN_HOSTS_FPATH}',
                 'demo-vm.exe.xyz',
                 'true',
             )
@@ -192,11 +181,7 @@ class TestExeDev:
         monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
         monkeypatch.setattr('lexe.provision.time.sleep', int)
 
-        ExeDev(
-            wait_timeout_seconds=1,
-            wait_interval_seconds=0,
-            ssh_known_hosts_fpath=KNOWN_HOSTS_FPATH,
-        ).ensure_docker('demo-vm')
+        ExeDev(wait_timeout_seconds=1, wait_interval_seconds=0).ensure_docker('demo-vm')
 
         assert len(calls) == 2
         assert all(
@@ -204,8 +189,6 @@ class TestExeDev:
             == (
                 '-o',
                 'StrictHostKeyChecking=accept-new',
-                '-o',
-                f'UserKnownHostsFile={KNOWN_HOSTS_FPATH}',
                 'demo-vm.exe.xyz',
                 'docker',
                 'info',
@@ -232,15 +215,11 @@ class TestExeDev:
 
         monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
 
-        assert ExeDev(ssh_known_hosts_fpath=KNOWN_HOSTS_FPATH).ensure_containerd_image_store(
-            'demo-vm',
-        )
+        assert ExeDev().ensure_containerd_image_store('demo-vm')
         assert calls[0] == (
             (
                 '-o',
                 'StrictHostKeyChecking=accept-new',
-                '-o',
-                f'UserKnownHostsFile={KNOWN_HOSTS_FPATH}',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'cat',
@@ -252,8 +231,6 @@ class TestExeDev:
             (
                 '-o',
                 'StrictHostKeyChecking=accept-new',
-                '-o',
-                f'UserKnownHostsFile={KNOWN_HOSTS_FPATH}',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'mkdir',
@@ -266,8 +243,6 @@ class TestExeDev:
             (
                 '-o',
                 'StrictHostKeyChecking=accept-new',
-                '-o',
-                f'UserKnownHostsFile={KNOWN_HOSTS_FPATH}',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'tee',
@@ -282,8 +257,6 @@ class TestExeDev:
             (
                 '-o',
                 'StrictHostKeyChecking=accept-new',
-                '-o',
-                f'UserKnownHostsFile={KNOWN_HOSTS_FPATH}',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'systemctl',
@@ -309,15 +282,11 @@ class TestExeDev:
 
         monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
 
-        assert ExeDev(ssh_known_hosts_fpath=KNOWN_HOSTS_FPATH).ensure_containerd_image_store(
-            'demo-vm',
-        )
+        assert ExeDev().ensure_containerd_image_store('demo-vm')
         assert calls[2] == (
             (
                 '-o',
                 'StrictHostKeyChecking=accept-new',
-                '-o',
-                f'UserKnownHostsFile={KNOWN_HOSTS_FPATH}',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'tee',
@@ -354,17 +323,12 @@ class TestExeDev:
 
         monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
 
-        assert (
-            ExeDev(ssh_known_hosts_fpath=KNOWN_HOSTS_FPATH).ensure_containerd_image_store('demo-vm')
-            is False
-        )
+        assert ExeDev().ensure_containerd_image_store('demo-vm') is False
         assert calls == [
             (
                 (
                     '-o',
                     'StrictHostKeyChecking=accept-new',
-                    '-o',
-                    f'UserKnownHostsFile={KNOWN_HOSTS_FPATH}',
                     'demo-vm.exe.xyz',
                     'sudo',
                     'cat',
@@ -388,14 +352,12 @@ class TestExeDev:
 
         monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
 
-        ExeDev(ssh_known_hosts_fpath=KNOWN_HOSTS_FPATH).verify_containerd_image_store('demo-vm')
+        ExeDev().verify_containerd_image_store('demo-vm')
         assert calls == [
             (
                 (
                     '-o',
                     'StrictHostKeyChecking=accept-new',
-                    '-o',
-                    f'UserKnownHostsFile={KNOWN_HOSTS_FPATH}',
                     'demo-vm.exe.xyz',
                     'docker',
                     'info',

@@ -10,14 +10,8 @@ if environ.get('FLASK_DEBUG'):
     # $ docker compose up -d redis
     REDIS_HOST = 'localhost'
 
-elif environ.get('JUKE_STACK'):
-    # Juke deployment
-    REDIS_HOST = 'redis.juke'
-
 else:
-    # Presumably Docker compose to check the built image without needing to push/pull to a registry
-    # $ docker compose up -d redis
-    # $ docker compose up --build web
+    # Docker Compose, including lexe deploys
     REDIS_HOST = 'redis'
 
 

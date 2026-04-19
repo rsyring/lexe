@@ -1,0 +1,14 @@
+services:
+  web:
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/').read().decode())\" | grep -q 'Hello, World!'",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 3s

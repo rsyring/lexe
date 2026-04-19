@@ -1,0 +1,3 @@
+app-name: flask
+vm-host-name: lexe-flask
+public-service: web

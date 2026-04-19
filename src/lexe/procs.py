@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 import logging
 from os import environ
+from pathlib import Path
 import subprocess
 from subprocess import CompletedProcess
 
@@ -51,5 +52,48 @@ def sub_run(
         raise CalledProcessError('n/a', args, '', '') from e
 
 
+def exe_dev_test_key_fpath() -> Path:
+    return Path.home() / '.ssh' / 'id_lexe_exe_dev_tests'
+
+
+def use_exe_dev_test_key() -> bool:
+    return environ.get('LEXE_USE_EXE_DEV_TEST_KEY') == '1'
+
+
+def exe_dev_ssh_args() -> tuple[str | Path, ...]:
+    key_fpath = exe_dev_test_key_fpath()
+    if not use_exe_dev_test_key() or not key_fpath.exists():
+        return ()
+
+    return (
+        '-o',
+        'IdentitiesOnly=yes',
+        '-o',
+        'IdentityAgent=none',
+        '-i',
+        key_fpath,
+    )
+
+
+def docker_ssh_command() -> str | None:
+    key_fpath = exe_dev_test_key_fpath()
+    if not use_exe_dev_test_key() or not key_fpath.exists():
+        return None
+
+    return (
+        'ssh '
+        '-o StrictHostKeyChecking=accept-new '
+        '-o IdentitiesOnly=yes '
+        '-o IdentityAgent=none '
+        f'-i {key_fpath}'
+    )
+
+
+def is_exe_dev_ssh_destination(arg: object) -> bool:
+    return isinstance(arg, str) and (arg == 'exe.dev' or arg.endswith('.exe.xyz'))
+
+
 def ssh(*args, **kwargs):
+    if args and is_exe_dev_ssh_destination(args[0]):
+        args = (*exe_dev_ssh_args(), *args)
     return sub_run('ssh', args=args, **kwargs)

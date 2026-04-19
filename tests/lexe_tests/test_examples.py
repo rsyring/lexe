@@ -1,8 +1,10 @@
 from pathlib import Path
 from urllib.request import urlopen
 
+from click.testing import CliRunner
 import pytest
 
+from lexe.cli import main
 from lexe.config import LexeConfig
 from lexe.deploy import Deploy
 from lexe.provision import Destroy, Provision
@@ -53,3 +55,22 @@ class TestFlask:
             urlopen(f'https://{config.vm_host_name}.exe.xyz:8000/', timeout=10).read().decode()
         )
         assert 'Hello, World!' in response
+        assert '<pre>' in response
+        assert 'pre-start' in response
+        assert 'app.py startup' in response
+        assert 'post-start' in response
+        assert (
+            response.index('pre-start')
+            < response.index('app.py startup')
+            < response.index('post-start')
+        )
+
+        result = CliRunner().invoke(
+            main,
+            ['status', '--config-fpath', str(FLASK_APP_DPATH / 'lexe.yaml')],
+        )
+
+        assert result.exit_code == 0
+        assert 'VM reachable: yes' in result.output
+        assert 'Compose project running: yes' in result.output
+        assert 'Healthcheck: healthy (200)' in result.output

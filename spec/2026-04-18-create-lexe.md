@@ -478,3 +478,14 @@ the config.  We should prefer convention over configuration by having sane/helpf
 - We probably shouldn't take the config file as an argument.  We should take the path to the app
   root to deploy, from which we should be able to find the config file.  This will be important
   for things like where to run commands from when we do things like docker build / and deploy.
+  - app_dpath should come from the config.  Default to the same directory as the config file but
+    make it configurable.  Use a nested paths key in the yaml:
+    ```
+      paths:
+        config: implicit, is the path to the file
+        app: directory of the app, defaults to directory `paths.config` is in.
+    ```
+
+-i / --ssh-key
+--no-host-key-check
+SSH strict-host-key-checking configuration

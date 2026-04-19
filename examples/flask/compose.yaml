@@ -3,8 +3,13 @@ services:
     image: ${LEXE_IMAGE:-flask:dev}
     build:
       context: .
+    volumes:
+      - app-data:/home/pyapp/data
     depends_on:
       - redis
 
   redis:
     image: redis:7-alpine
+
+volumes:
+  app-data:

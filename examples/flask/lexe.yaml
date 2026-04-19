@@ -1,3 +1,7 @@
 app-name: flask
 vm-host-name: lexe-flask
 public-service: web
+healthcheck-url: https://lexe-flask.exe.xyz:8000/
+hooks:
+  pre-start: python hooks/log_event.py
+  post-start: python hooks/log_event.py

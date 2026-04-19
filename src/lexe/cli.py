@@ -5,6 +5,7 @@ import click
 from lexe.config import LexeConfig, find_lexe_fpath
 from lexe.deploy import Deploy
 from lexe.provision import Destroy, Provision
+from lexe.status import Status
 
 
 @click.group()
@@ -46,3 +47,15 @@ def deploy(config_fpath: Path, allow_dirty: bool) -> None:
     config_fpath = find_lexe_fpath(config_fpath)
     config = LexeConfig.from_yaml(config_fpath)
     Deploy(config=config, app_dpath=config_fpath.parent, allow_dirty=allow_dirty).run()
+
+
+@main.command()
+@click.option(
+    '--config-fpath',
+    type=click.Path(path_type=Path),
+    default=Path('lexe.yaml'),
+)
+def status(config_fpath: Path) -> None:
+    config_fpath = find_lexe_fpath(config_fpath)
+    config = LexeConfig.from_yaml(config_fpath)
+    Status(config=config, app_dpath=config_fpath.parent).run()

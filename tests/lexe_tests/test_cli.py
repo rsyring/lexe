@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from click.testing import CliRunner
 
 import lexe.cli
@@ -83,3 +85,28 @@ class TestDeploy:
         assert seen['config'].vm_host_name == 'demo-vm'
         assert seen['app_dpath'] == tmp_path
         assert seen['allow_dirty'] is True
+
+
+class TestStatus:
+    def test_command(self, tmp_path):
+        config_fpath = tmp_path / 'lexe.yaml'
+        config_fpath.write_text('app-name: demo\nvm-host-name: demo-vm\n')
+
+        seen = {}
+
+        class FakeStatus:
+            def __init__(self, config, app_dpath):
+                seen['config'] = config
+                seen['app_dpath'] = app_dpath
+
+            def run(self):
+                seen['ran'] = True
+
+        with patch.object(lexe.cli, 'Status', FakeStatus):
+            result = CliRunner().invoke(main, ['status', '--config-fpath', str(config_fpath)])
+
+        assert result.exit_code == 0
+        assert seen['ran'] is True
+        assert seen['config'].app_name == 'demo'
+        assert seen['config'].vm_host_name == 'demo-vm'
+        assert seen['app_dpath'] == tmp_path

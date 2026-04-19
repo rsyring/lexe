@@ -11,6 +11,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev --group docker
 COPY app.py pyproject.toml uv.lock ./
+COPY hooks ./hooks
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --group docker
 
@@ -18,6 +19,9 @@ FROM python:3.13-slim
 
 RUN groupadd --system --gid 999 pyapp \
  && useradd --system --gid 999 --uid 999 --create-home pyapp
+
+RUN mkdir -p /home/pyapp/data \
+ && chown -R pyapp:pyapp /home/pyapp
 
 COPY --from=builder --chown=pyapp:pyapp /app /app
 

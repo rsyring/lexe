@@ -48,5 +48,6 @@ Avoid creating a lot of top-level functions when the logic is associated with it
 
 ## Python pytest Tests
 
-Tests should be pytest style and class based.  That is, tests should usually be methods on a test
+- Tests should be pytest style and class based.  That is, tests should usually be methods on a test
 class, not top-level module functions.
+- Use `unittest.mock` instead of pytest's `monkeypatch` fixture

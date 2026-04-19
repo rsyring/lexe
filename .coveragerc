@@ -1,0 +1,13 @@
+# .coveragerc to control coverage.py
+[run]
+branch = True
+omit =
+    src/lexe/version.py
+
+source =
+    src/lexe
+    tests/lexe_tests
+
+
+[html]
+directory = tmp/coverage-html

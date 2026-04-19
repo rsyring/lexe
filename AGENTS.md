@@ -18,3 +18,11 @@ If you are ever confused about what you have permission to do, stop and ask.
    applies to the current task.
 3. If the index file cannot be fetched, stop and report that failure before answering the user
    substantively.
+4. WHEN you load a document from the index, notify the user.
+
+
+# Python Style
+
+We want modern Python style with a preference for dataclasses and object oriented behaviors on those classes when warranted.
+
+Avoid creating a lot of top-level functions when the logic is associated with it's data and should be on the class.

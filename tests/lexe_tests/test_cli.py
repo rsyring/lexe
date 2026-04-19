@@ -11,8 +11,9 @@ def test_main_provision(tmp_path, monkeypatch):
     seen = {}
 
     class FakeProvision:
-        def __init__(self, config):
+        def __init__(self, config, app_dpath):
             seen['config'] = config
+            seen['app_dpath'] = app_dpath
 
         def run(self):
             seen['ran'] = True
@@ -25,6 +26,7 @@ def test_main_provision(tmp_path, monkeypatch):
     assert seen['ran'] is True
     assert seen['config'].app_name == 'demo'
     assert seen['config'].vm_host_name == 'demo-vm'
+    assert seen['app_dpath'] == tmp_path
 
 
 def test_main_destroy(tmp_path, monkeypatch):
@@ -48,3 +50,33 @@ def test_main_destroy(tmp_path, monkeypatch):
     assert seen['ran'] is True
     assert seen['config'].app_name == 'demo'
     assert seen['config'].vm_host_name == 'demo-vm'
+
+
+def test_main_deploy(tmp_path, monkeypatch):
+    config_fpath = tmp_path / 'lexe.yaml'
+    config_fpath.write_text('app-name: demo\nvm-host-name: demo-vm\n')
+
+    seen = {}
+
+    class FakeDeploy:
+        def __init__(self, config, app_dpath, allow_dirty):
+            seen['config'] = config
+            seen['app_dpath'] = app_dpath
+            seen['allow_dirty'] = allow_dirty
+
+        def run(self):
+            seen['ran'] = True
+
+    monkeypatch.setattr(lexe.cli, 'Deploy', FakeDeploy)
+
+    result = CliRunner().invoke(
+        main,
+        ['deploy', '--config-fpath', str(config_fpath), '--allow-dirty'],
+    )
+
+    assert result.exit_code == 0
+    assert seen['ran'] is True
+    assert seen['config'].app_name == 'demo'
+    assert seen['config'].vm_host_name == 'demo-vm'
+    assert seen['app_dpath'] == tmp_path
+    assert seen['allow_dirty'] is True

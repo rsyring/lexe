@@ -19,6 +19,22 @@ def find_upwards(d: Path, filename: str):
     return None
 
 
+def find_lexe_fpath(start_at: Path) -> Path:
+    if start_at.is_dir():
+        config_fpath = find_upwards(start_at, 'lexe.yaml')
+
+        if config_fpath is None:
+            raise ValueError(f'No lexe.yaml in {start_at} or parents')
+
+    elif start_at.suffix == '.yaml':
+        config_fpath = start_at
+
+    else:
+        raise ValueError(f'{start_at} should be a directory or .yaml file')
+
+    return config_fpath
+
+
 @serde
 class LexeConfig:
     app_name: str = field(rename='app-name')
@@ -32,16 +48,4 @@ class LexeConfig:
 
     @classmethod
     def find_lexe(cls, start_at: Path) -> LexeConfig:
-        if start_at.is_dir():
-            config_fpath = find_upwards(start_at, 'lexe.yaml')
-
-            if config_fpath is None:
-                raise ValueError(f'No lexe.yaml in {start_at} or parents')
-
-        elif start_at.suffix == '.yaml':
-            config_fpath = start_at
-
-        else:
-            raise ValueError(f'{start_at} should be a directory or .yaml file')
-
-        return cls.from_yaml(config_fpath)
+        return cls.from_yaml(find_lexe_fpath(start_at))

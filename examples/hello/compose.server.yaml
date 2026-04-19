@@ -1,0 +1,10 @@
+services:
+  web:
+    ports:
+      - "5678:5678"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:5678/ | grep -q 'hello from lexe'"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 1s

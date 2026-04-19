@@ -12,11 +12,19 @@
 - `~/projects/code-examples/configs/juke-config.py`: for app config file processing example
 
 
+## Design Positioning
+
+- Closest analog: Kamal v2, but smaller and more opinionated for single-deployer / personal use.
+- v1 intentionally skips proxy-based cutover and accepts stop-then-start deploys.
+- A future reduced-downtime path could use a suffixed compose project plus proxy cutover.
+
+
 ## App / VM Setup
 
 - Each app gets it's own VM
 - If VM doesn't exist, create it
-- Do some basic VM prep like turning on automatic updates (details TBD)
+- Do some basic VM prep like turning on automatic updates and applying existing host hardening
+  scripts for Ubuntu 24.04 (details TBD)
 - If public, use exe.dev ssh commands to make VM's web app publically accessible
 - Make the app's HTTP(S) port(s) the default ones for the VM
 
@@ -28,9 +36,11 @@
     - compose.yaml: base file shared by local and remote
     - compose.server.yaml: used explicitly with deploy logic
     - compose.override.yaml: for local dev, automatically used by docker compose
-- Build docker image in local registery
+- `lexe deploy` must always pass `-f compose.yaml -f compose.server.yaml` explicitly so
+  `compose.override.yaml` never leaks into deploys
+- Build docker image in local Docker image store
     - Tag each unique build so we can target it as part of the deploy
-- Use unregistry to transfer image to remote
+- Use `docker pussh` to transfer image to remote
 - Stop existing service(s) if running
 - Run pre-start hook: used for things like database migrations
 - Start services
@@ -88,7 +98,13 @@ We'll figure that out as we go along
 
 - How should secrets and environment variables be represented in config vs injected at deploy time?
 
-Every app will get a 1password service account.  We will use the op cli (which we need to install as part of our provision) to hydrate a .env template file.
+Every app will get a 1password service account. We will use the `op` CLI to hydrate a committed
+env template file at deploy time.
+
+Default path: `deploy/default.env`
+
+That file contains `op://` references, is safe to commit, and is configurable in `lexe.yaml` so we
+can support variants like `deploy/staging.env` and `deploy/prod.env` later.
 
 See `./spec/deploy-secrets-example.sh` as a reference.
 
@@ -139,13 +155,15 @@ The local docker daemon images.  Read the unregistry repo to see how it works to
 
 - How should unique build tags be generated?
 
-Let's use `v{year}-{month}-{day}-{count}`.  Count increments if we do more than one deploy a day.
+Use `vYYYY-MM-DD-<sha7>` based on the current git commit SHA.
+
+`lexe deploy` should fail fast if the working tree is dirty.
 
 - Should `lexe deploy` always build locally, or should it also support deploying an already-built
   image tag?
 
     - Build locally, which should be really fast if already built and no changes
-    - use `unregistry`'s docker integration to sync the image to the remote server
+    - use `docker pussh` to sync the image to the remote server
 
 
 ### Deploy Behavior
@@ -231,14 +249,23 @@ Defined above.
 - Initial commands are `provision`, `deploy`, and `status`.
 - App config lives in each app repo in `lexe.yaml`.
 - Config format is YAML.
-- Secrets are hydrated locally using a 1Password service account and `op run --env-file`, then passed to remote containers via the Docker API at container create/run time.
+- Closest analog is Kamal v2, but `lexe` intentionally skips proxy-based cutover in v1.
+- Secrets are hydrated locally using a 1Password service account and `op run --env-file` from a committed template file (default `deploy/default.env`), then passed to remote containers via the Docker API at container create/run time.
 - VM identity is provided explicitly by config via `vm-host-name`.
 - `provision` is idempotent and is responsible for bringing the VM into conformance.
-- Deploys build locally, sync the built image to the VM via unregistry / `docker pussh`, and then manage remote containers from the local machine by targeting the remote Docker daemon.
+- Deploys acquire a local `flock` lock on `lexe-deploy.lock` before doing work.
+- Release tags use `vYYYY-MM-DD-<sha7>` from the current git commit SHA.
+- `deploy` fails fast if the git working tree is dirty.
+- If the computed release tag already exists on the remote daemon, `deploy` is a no-op by default.
+- `deploy --force` re-runs stop/start, hooks, and healthcheck when the image is already on the VM.
+- Deploys build locally, sync the built image to the VM via `docker pussh`, and then manage remote containers from the local machine by targeting the remote Docker daemon over `DOCKER_HOST=ssh://...`.
+- `docker compose` must always explicitly select `compose.yaml` and `compose.server.yaml` for deploys.
+- Host bind mounts in `compose.server.yaml` refer to paths on the VM; named volumes are preferred.
 - Successful deploy means a configured healthcheck URL returns a 2xx status code.
 - Pre-start hooks abort deploy on failure. Post-start hooks are report-only.
 - Output should be human-readable.
-- Deploy history should be recorded in `lexe-logs.md`.
+- Deploy history should be recorded in committed `lexe-logs.md` at repo root.
+- Successful deploys run `docker image prune --force` on the VM to clear dangling layers.
 - No remote deploy directory is required in v1.
 
 
@@ -261,13 +288,21 @@ Expected repository files:
 - `compose.yaml`: base compose definition shared across environments
 - `compose.server.yaml`: deploy-specific compose overrides used by `lexe deploy`
 - `compose.override.yaml`: local dev only; not used by `lexe deploy`
-- `secrets.env`: local env template with 1Password references consumable by local `op run --env-file`
-- `lexe-logs.md`: append-only local deploy log written by `lexe`
+- `deploy/default.env`: committed env template with 1Password references consumable by local `op run --env-file`
+- `lexe-logs.md`: append-only deploy log written by `lexe` and committed to the repo
 
 
 ## Proposed `lexe.yaml` Schema
 
-We'll define the config as we need it otherwise it's probably YAGNI.
+Initial fields already implied by the rest of this spec:
+
+- `app-name`
+- `vm-host-name`
+- `public-service`
+- `healthcheck-url`
+- `deploy.env-file` (default `deploy/default.env`)
+- `hooks.pre-start`
+- `hooks.post-start`
 
 ## Proposed v1 Command Contract
 
@@ -277,15 +312,17 @@ Responsibilities:
 
 - Validate `lexe.yaml`
 - Ensure the target VM exists; create it if not
-- Assume the VM is reachable over SSH
+- Wait for the VM to become reachable over SSH after create / update
 - Ensure the Docker Engine is installed and usable on the VM
 - Validate local prerequisites needed to target the remote Docker daemon:
     - Docker CLI
     - Docker Compose plugin
     - `docker pussh`
     - `op` CLI
+    - `flock`
     - SSH access to the VM
-- Ensure VM-level configuration required by the app is present
+- Ensure VM-level configuration required by the app is present, including invoking existing host
+  hardening/setup scripts for Ubuntu 24.04 as needed
 - If it's a public service, configure public HTTP exposure for the selected app service
 
 Behavior:
@@ -300,22 +337,28 @@ Behavior:
 Responsibilities:
 
 - Validate `lexe.yaml`
-- Build the app image locally
-- Generate a release tag in the form `vYYYY-MM-DD-N`
+- Acquire a local lock with `flock lexe-deploy.lock`
+- Require a clean git working tree
+- Generate a release tag in the form `vYYYY-MM-DD-<sha7>`
+- Check whether that release tag already exists on the remote daemon
+- Build the app image locally when needed
 - Tag the built image with the computed release tag
 - Push the image directly to the remote VM with `docker pussh`
-- Run local `docker compose` against the remote Docker daemon using local compose files
+- Run local `docker compose -f compose.yaml -f compose.server.yaml` against the remote Docker daemon using local compose files
 - Hydrate secrets locally with `op run --env-file` before creating or replacing remote containers
 - Stop and replace running services on the remote VM via the remote Docker daemon
 - Run configured pre-start hooks as one-off containers on the remote VM via the remote Docker daemon
 - Run configured post-start hooks the same way after startup
 - Check `healthcheck-url` from the local machine until success or timeout
 - Append a deploy record to `lexe-logs.md`
+- Run `docker image prune --force` on the VM after a successful deploy
 
 Behavior:
 
 - `deploy` does not implicitly create the VM. User runs `provision` first.
 - If local or remote prerequisites are missing, fail with a clear error.
+- If the computed release tag already exists on the remote daemon, report that the commit is already deployed and exit successfully.
+- `deploy --force` overrides the no-op path when the image is already present: it still skips build + `docker pussh`, but re-runs stop/start, hooks, and healthcheck.
 - Failed pre-start hooks abort deploy.
 - Failed post-start hooks are reported but do not fail the deploy.
 - If healthcheck never succeeds, mark deploy failed and surface the failure. No rollback is attempted.
@@ -337,11 +380,14 @@ Note: `status` should be kept minimal until `provision` and `deploy` are impleme
 ## Proposed v1 Execution Model
 
 - `lexe` runs `docker`, `docker compose`, and `op` locally.
-- `lexe` targets the remote VM's Docker daemon from the local machine.
+- `lexe` targets the remote VM's Docker daemon from the local machine via `DOCKER_HOST=ssh://...`.
 - Compose files remain local and are evaluated locally by Docker Compose.
-- `secrets.env` remains local and is hydrated locally by `op run --env-file`.
+- Deploys must always pass `-f compose.yaml -f compose.server.yaml` explicitly.
+- `deploy/default.env` remains local and is hydrated locally by `op run --env-file`.
 - Hydrated secret values are sent to the remote Docker daemon as part of container configuration.
 - Secret values are not baked into the image; they are attached to running containers at deploy time.
+- Host bind mounts in `compose.server.yaml` refer to remote VM paths, not local paths.
+- Named Docker volumes are preferred over host bind mounts for server-side data.
 - No remote deploy directory is required for v1.
 
 
@@ -349,14 +395,13 @@ Note: `status` should be kept minimal until `provision` and `deploy` are impleme
 
 Image tag format:
 
-- `vYYYY-MM-DD-N`
+- `vYYYY-MM-DD-<sha7>`
 
 Tag generation rule:
 
-- Use local date at deploy time
-- Read `lexe-logs.md`
-- Count existing deploy entries for that date
-- Next deploy for that date uses `count + 1`
+- Use local date at deploy time plus the current git commit SHA
+- Refuse to deploy if the working tree is dirty
+- Do not derive tag uniqueness from `lexe-logs.md`
 
 `lexe-logs.md` should record at least:
 
@@ -369,16 +414,21 @@ Tag generation rule:
 - git commit SHA if available
 - deploy result
 
+`lexe-logs.md` is committed to git. It is history only, not part of tag derivation.
+
 
 ## Proposed v1 Healthcheck Behavior
 
-- `healthcheck-url` is required for public apps
+- `healthcheck-url` is required for all apps in v1
 - Healthcheck is executed from the local machine, not from inside the VM
+- For non-public apps, the healthcheck may only be reachable when the developer is authenticated to
+  exe.dev
 - Success means HTTP status code is in the 2xx range
 - Default behavior:
   - wait up to 90 seconds
   - retry every 3 seconds
 - If the healthcheck does not succeed within the timeout, deploy is considered failed
+- A future enhancement may detect `401` / `403` and prompt the developer to log in
 
 
 ## Proposed v1 Hook Execution Model
@@ -393,9 +443,18 @@ Tag generation rule:
 
 - Confirm the exact exe.dev public HTTP proxy commands / API needed for `public-service` exposure
 - Confirm whether binding directly to 80/443 inside Docker Compose is preferable to using exe.dev HTTP proxy mapping
-- Decide whether any deploy metadata beyond `lexe-logs.md` is needed, or whether container labels are sufficient
-- Decide whether `lexe-logs.md` should live at repo root or under a dedicated `.lexe/` directory
-- Decide whether non-public apps require a healthcheck URL in v1 or may omit it
+
+
+## Integrated Evaluation Notes
+
+- The spec aligns closest with Kamal-style VM deploys, but keeps a smaller MVP surface.
+- The biggest intentional tradeoff in v1 is stop-then-start deploys instead of proxy-mediated cutover.
+- The highest-value guardrails added from evaluation are:
+  - git-sha-based release tags
+  - explicit compose file selection
+  - local deploy locking
+  - remote-docker bind-mount clarification
+  - dangling-image cleanup after successful deploy
 
 
 ## Recommended Build Order
@@ -403,10 +462,12 @@ Tag generation rule:
 Config loading + validation will be built iteratively as we run into values that might come from
 the config.  We should prefer convention over configuration by having sane/helpful config defaults.
 
-3. Implement `provision`
-4. Implement release tag generation + local deploy log writing
-5. Implement local image build + `docker pussh`
-6. Implement local compose deployment flow targeting the remote Docker daemon
-7. Implement hook execution
-8. Implement healthcheck verification
+1. Implement config loading + validation
+2. Implement `provision`
+3. Implement deploy locking + git cleanliness checks + release tag generation + local deploy log writing
+4. Implement local image build + `docker pussh`
+5. Implement local compose deployment flow targeting the remote Docker daemon
+6. Implement hook execution
+7. Implement healthcheck verification
+8. Implement successful-deploy image prune
 9. Implement minimal `status`

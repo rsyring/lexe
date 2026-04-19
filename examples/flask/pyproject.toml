@@ -1,0 +1,16 @@
+[project]
+name = "FlaskDemo"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "flask>=3.1.1",
+    "redis>=6.4.0",
+]
+
+[dependency-groups]
+dev = [
+    "python-dotenv>=1.1.1",
+]
+docker = [
+    "granian>=2.3.4",
+]

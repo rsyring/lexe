@@ -1,0 +1,4 @@
+services:
+  echo:
+    environment:
+      ECHO_TEXT: 'prod config'

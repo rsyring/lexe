@@ -1,0 +1,23 @@
+services:
+  web:
+    image: ghcr.io/level12/juke-inc/juke-flask:latest
+    container_name: juke-flask-web
+    build:
+      context: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: juke-flask-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  bash:
+    # Easily explore your built web container with:
+    # docker compose run --build --rm bash
+    extends: web
+    container_name: juke-flask-bash
+    entrypoint: bash

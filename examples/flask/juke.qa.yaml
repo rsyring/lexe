@@ -1,0 +1,9 @@
+stack:
+  # Changing ident is necessary because, without specifying a deploy host, this will be deployed to
+  # the local host just like the base config and we don't want them to conflict.
+  ident: flask-example-qa
+
+services:
+  echo:
+    environment:
+      ECHO_TEXT: 'qa config'

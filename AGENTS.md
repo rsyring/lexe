@@ -19,6 +19,12 @@ You are granted limited permissions to use `ssh exe.dev` which is working agains
 
 You may ONLY run destructive commands against exe.dev when it is for one of our apps in the `./examples` folder.
 
+## exe.dev integration test SSH key
+
+For integration tests against exe.dev VMs, use the dedicated key at `~/.ssh/id_lexe_exe_dev_tests`.
+
+`*.exe.xyz` SSH connections used by tests should prefer that key with `IdentitiesOnly yes` and `IdentityAgent none` so tests do not depend on a 1Password-managed key.
+
 
 # Conditional Instructions Index
 

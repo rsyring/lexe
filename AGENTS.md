@@ -9,6 +9,11 @@ You are ONLY ALLOWED to run READ-ONLY cli commands.
 
 If you are ever confused about what you have permission to do, stop and ask.
 
+## Exceptions
+
+1. You ARE PERMITTED to run `uv add` commands in response to user instructions.
+
+
 # Conditional Instructions Index
 
 1. At the start of every session, before responding to the first user prompt or doing any

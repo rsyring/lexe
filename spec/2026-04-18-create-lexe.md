@@ -471,3 +471,10 @@ the config.  We should prefer convention over configuration by having sane/helpf
 7. Implement healthcheck verification
 8. Implement successful-deploy image prune
 9. Implement minimal `status`
+
+
+# TODO: misc
+
+- We probably shouldn't take the config file as an argument.  We should take the path to the app
+  root to deploy, from which we should be able to find the config file.  This will be important
+  for things like where to run commands from when we do things like docker build / and deploy.

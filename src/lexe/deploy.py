@@ -4,87 +4,117 @@ from pathlib import Path
 
 import click
 
-from lexe.config import LexeConfig
-from lexe.procs import docker_ssh_command, exe_dev_test_key_fpath, sub_run, use_exe_dev_test_key
+from lexe.config import CLIOpts, ConfigOpts, HookCommand, LexeConfig
+from lexe.procs import (
+    docker_client_env,
+    docker_host_url,
+    docker_pussh_args,
+    docker_pussh_env,
+    sub_run,
+)
 
 
 @dataclass
 class Deploy:
-    config: LexeConfig
-    app_dpath: Path
+    config_opts: ConfigOpts
     allow_dirty: bool = False
     wait_timeout_seconds: int = 90
+
+    @property
+    def config(self) -> LexeConfig:
+        return self.config_opts.config
+
+    @property
+    def opts(self) -> CLIOpts:
+        return self.config_opts.opts
+
+    @property
+    def app_dpath(self) -> Path:
+        return self.config.project.path
+
+    @property
+    def app_name(self) -> str:
+        return self.config.project.name
+
+    @property
+    def vm_host_name(self) -> str:
+        return self.config.project.vm_host
 
     def run(self) -> None:
         self.ensure_required_files()
         dirty = self.is_dirty_worktree()
         self.ensure_dirty_allowed(dirty)
         image_ref = self.image_ref(dirty)
-        compose_env = self.compose_env(image_ref)
 
-        click.echo(f'Loaded lexe config for {self.config.app_name} ({self.config.vm_host_name}).')
-        click.echo(f'Deploying {image_ref} to {self.remote_host}.')
+        with (
+            docker_host_url(self.remote_host, self.opts) as docker_host,
+            docker_client_env(self.remote_host, self.opts) as docker_env,
+        ):
+            compose_env = self.compose_env(image_ref, docker_host) | docker_env
 
-        click.echo('Building image locally...')
-        sub_run('docker', 'build', '-t', image_ref, '.', cwd=self.app_dpath)
+            click.echo(f'Loaded lexe config for {self.app_name} ({self.vm_host_name}).')
+            click.echo(f'Deploying {image_ref} to {self.remote_host}.')
 
-        click.echo('Transferring image to remote VM...')
-        sub_run(
-            'docker',
-            'pussh',
-            *self.docker_pussh_args(),
-            image_ref,
-            self.remote_host,
-            cwd=self.app_dpath,
-            env=self.docker_pussh_env(),
-        )
+            click.echo('Building image locally...')
+            sub_run('docker', 'build', '-t', image_ref, '.', cwd=self.app_dpath)
 
-        self.run_hooks(
-            'pre-start',
-            self.config.hooks.pre_start,
-            compose_env,
-            abort_on_failure=True,
-        )
+            click.echo('Transferring image to remote VM...')
+            sub_run(
+                'docker',
+                'pussh',
+                *docker_pussh_args(self.opts),
+                image_ref,
+                self.remote_host,
+                cwd=self.app_dpath,
+                env=docker_pussh_env(self.opts),
+            )
 
-        click.echo('Starting services on remote VM...')
-        sub_run(
-            'docker',
-            *self.compose_args(),
-            'up',
-            '-d',
-            '--wait',
-            '--wait-timeout',
-            str(self.wait_timeout_seconds),
-            '--force-recreate',
-            '--remove-orphans',
-            cwd=self.app_dpath,
-            env=compose_env,
-        )
+            self.run_hooks(
+                'pre-start',
+                self.service_hooks('start_pre'),
+                compose_env,
+                abort_on_failure=True,
+            )
 
-        self.run_hooks(
-            'post-start',
-            self.config.hooks.post_start,
-            compose_env,
-            abort_on_failure=False,
-        )
+            click.echo('Starting services on remote VM...')
+            sub_run(
+                'docker',
+                *self.compose_args(),
+                'up',
+                '-d',
+                '--wait',
+                '--wait-timeout',
+                str(self.wait_timeout_seconds),
+                '--force-recreate',
+                '--remove-orphans',
+                cwd=self.app_dpath,
+                env=compose_env,
+            )
 
-        click.echo('Remote compose status:')
-        result = sub_run(
-            'docker',
-            *self.compose_args(),
-            'ps',
-            capture=True,
-            cwd=self.app_dpath,
-            env=compose_env,
-        )
-        if result.stdout:
-            click.echo(result.stdout.rstrip())
+            self.run_hooks(
+                'post-start',
+                self.service_hooks('start_post'),
+                compose_env,
+                abort_on_failure=False,
+            )
+
+            click.echo('Remote compose status:')
+            result = sub_run(
+                'docker',
+                *self.compose_args(),
+                'ps',
+                capture=True,
+                cwd=self.app_dpath,
+                env=compose_env,
+            )
+            if result.stdout:
+                click.echo(result.stdout.rstrip())
 
         click.echo('Deploy complete.')
 
     @property
     def remote_host(self) -> str:
-        return f'{self.config.vm_host_name}.exe.xyz'
+        return f'{self.vm_host_name}.exe.xyz'
 
     def ensure_required_files(self) -> None:
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
@@ -98,7 +128,8 @@ class Deploy:
     def ensure_dirty_allowed(self, dirty: bool) -> None:
         if dirty and not self.allow_dirty:
             raise click.ClickException(
-                'Git working tree is dirty. Re-run with --allow-dirty to deploy uncommitted changes.',
+                'Git working tree is dirty. Re-run with --allow-dirty to deploy '
+                'uncommitted changes.',
             )
 
     def image_ref(self, dirty: bool) -> str:
@@ -112,44 +143,38 @@ class Deploy:
         release_tag = f'v{date.today().isoformat()}-{commit_sha[:7]}'
         if dirty:
             release_tag += '-dirty'
-        return f'{self.config.app_name}:{release_tag}'
+        return f'{self.app_name}:{release_tag}'
 
     def compose_args(self) -> tuple[str, ...]:
         return ('compose', '-f', 'compose.yaml', '-f', 'compose.server.yaml')
 
-    def compose_env(self, image_ref: str) -> dict[str, str]:
+    def compose_env(self, image_ref: str, docker_host: str) -> dict[str, str]:
         env = {
-            'COMPOSE_PROJECT_NAME': self.config.app_name,
-            'DOCKER_HOST': f'ssh://{self.remote_host}',
+            'COMPOSE_PROJECT_NAME': self.app_name,
+            'DOCKER_HOST': docker_host,
             'LEXE_IMAGE': image_ref,
         }
-        if ssh_command := docker_ssh_command():
-            env['DOCKER_SSH_COMMAND'] = ssh_command
         return env
 
-    def docker_pussh_args(self) -> tuple[str | Path, ...]:
-        key_fpath = exe_dev_test_key_fpath()
-        if not use_exe_dev_test_key() or not key_fpath.exists():
-            return ()
-        return ('--ssh-key', key_fpath)
-
-    def docker_pussh_env(self) -> dict[str, str] | None:
-        key_fpath = exe_dev_test_key_fpath()
-        if not use_exe_dev_test_key() or not key_fpath.exists():
-            return None
-        return {'SSH_STRICT_HOST_KEY_CHECKING': 'accept-new'}
+    def service_hooks(self, attr_name: str) -> list[tuple[str, HookCommand]]:
+        return [
+            (service_name, hook_command)
+            for service_name, service in self.config.services.items()
+            for hook_command in getattr(service.hooks, attr_name)
+        ]
 
     def run_hooks(
         self,
         phase: str,
-        hooks,
+        hooks: list[tuple[str, HookCommand]],
         compose_env: dict[str, str],
         *,
         abort_on_failure: bool,
     ) -> None:
-        for index, hook in enumerate(hooks, start=1):
+        for index, (service_name, hook_command) in enumerate(hooks, start=1):
             click.echo(
-                f'Running {phase} hook {index} on service {hook.service}: {hook.display_command()}',
+                f'Running {phase} hook {index} on service '
+                f'{service_name}: {self.display_command(hook_command)}',
             )
             result = sub_run(
                 'docker',
@@ -159,7 +184,7 @@ class Deploy:
                 '--no-deps',
                 '--env',
                 f'LEXE_HOOK_NAME={phase}',
-                *hook.compose_run_args(),
+                *self.compose_run_args(service_name, hook_command),
                 cwd=self.app_dpath,
                 env=compose_env,
                 capture=True,
@@ -168,10 +193,23 @@ class Deploy:
             if result.returncode != 0:
                 click.echo(
                     f'{phase.capitalize()} hook {index} failed on service '
-                    f'{hook.service} with exit code {result.returncode}.',
+                    f'{service_name} with exit code {result.returncode}.',
                 )
                 self.echo_hook_output(result.stdout, label='stdout')
                 self.echo_hook_output(result.stderr, label='stderr')
+
+    def compose_run_args(self, service_name: str, hook_command: HookCommand) -> tuple[str, ...]:
+        if isinstance(hook_command, str):
+            return ('--entrypoint', 'sh', service_name, '-lc', hook_command)
+
+        assert hook_command
+        return ('--entrypoint', hook_command[0], service_name, *hook_command[1:])
+
+    def display_command(self, hook_command: HookCommand) -> str:
+        if isinstance(hook_command, str):
+            return hook_command
+
+        return ' '.join(hook_command)
 
     def echo_hook_output(self, text: str, *, label: str) -> None:
         stripped = text.strip()

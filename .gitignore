@@ -37,3 +37,4 @@ tf.plan
 
 
 # Project specific
+tests/ssh-keys

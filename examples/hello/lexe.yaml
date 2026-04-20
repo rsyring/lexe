@@ -1,2 +1,6 @@
-app-name: hello
-vm-host-name: lexe-hello
+project:
+  name: hello
+  vm-host: lexe-hello
+
+services:
+  web:

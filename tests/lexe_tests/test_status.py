@@ -1,8 +1,20 @@
+from contextlib import nullcontext
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from lexe.config import LexeConfig
+from lexe.config import CLIOpts, ConfigOpts, LexeConfig
 from lexe.status import Status
+
+
+def make_config_opts(tmp_path, *, healthcheck_url=None):
+    config_data = {
+        'project': {'path': tmp_path, 'name': 'demo', 'vm-host': 'demo-vm'},
+        'services': {'web': {}},
+    }
+    if healthcheck_url:
+        config_data['public'] = {'healthcheck-url': healthcheck_url}
+
+    return ConfigOpts(config=LexeConfig.model_validate(config_data), opts=CLIOpts())
 
 
 class FakeExeDev:
@@ -19,14 +31,11 @@ class TestStatus:
     def test_run(self, tmp_path, capsys):
         (tmp_path / 'lexe-logs.md').write_text('old\nlatest entry\n')
         exe_dev = FakeExeDev(returncode=0)
-        config = LexeConfig(
-            app_name='demo',
-            vm_host_name='demo-vm',
-            healthcheck_url='https://demo.exe.xyz/health',
-        )
+        config_opts = make_config_opts(tmp_path, healthcheck_url='https://demo.exe.xyz/health')
 
         with (
-            patch('lexe.status.docker_ssh_command', return_value=None),
+            patch('lexe.status.docker_host_url', return_value=nullcontext('ssh://demo-vm.exe.xyz')),
+            patch('lexe.status.docker_client_env', return_value=nullcontext({})),
             patch(
                 'lexe.status.sub_run',
                 return_value=CompletedProcess(
@@ -39,7 +48,7 @@ class TestStatus:
             patch('lexe.status.urlopen') as mock_urlopen,
         ):
             mock_urlopen.return_value.getcode.return_value = 200
-            Status(config=config, app_dpath=tmp_path, exe_dev=exe_dev).run()
+            Status(config_opts=config_opts, exe_dev=exe_dev).run()
 
         assert exe_dev.calls == [('demo-vm', ('true',), {'capture': True, 'check': False})]
         assert capsys.readouterr().out == (
@@ -56,10 +65,13 @@ class TestStatus:
 
     def test_run_when_unreachable(self, tmp_path, capsys):
         exe_dev = FakeExeDev(returncode=255)
-        config = LexeConfig(app_name='demo', vm_host_name='demo-vm', healthcheck_url=None)
+        config_opts = make_config_opts(tmp_path)
 
-        with patch('lexe.status.docker_ssh_command', return_value=None):
-            Status(config=config, app_dpath=tmp_path, exe_dev=exe_dev).run()
+        with (
+            patch('lexe.status.docker_host_url', return_value=nullcontext('ssh://demo-vm.exe.xyz')),
+            patch('lexe.status.docker_client_env', return_value=nullcontext({})),
+        ):
+            Status(config_opts=config_opts, exe_dev=exe_dev).run()
 
         assert capsys.readouterr().out == (
             'App: demo\n'

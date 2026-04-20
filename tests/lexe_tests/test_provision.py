@@ -3,8 +3,19 @@ import json
 from pathlib import Path
 from subprocess import CompletedProcess
 
-from lexe.config import LexeConfig
+from lexe.config import CLIOpts, ConfigOpts, LexeConfig
 from lexe.provision import Destroy, ExeDev, Provision
+
+
+def make_config_opts(*, path: Path = Path('/repo/app'), public: bool = False) -> ConfigOpts:
+    config = LexeConfig.model_validate(
+        {
+            'project': {'path': path, 'name': 'demo', 'vm-host': 'demo-vm'},
+            'services': {'web': {}},
+            **({'public': {'port': 8000}} if public else {}),
+        },
+    )
+    return ConfigOpts(config=config, opts=CLIOpts())
 
 
 @dataclass
@@ -41,10 +52,9 @@ class FakeExeDev:
 
 class TestProvision:
     def test_run(self, capsys):
-        config = LexeConfig(app_name='demo', vm_host_name='demo-vm', public_service='web')
         exe_dev = FakeExeDev(ensure_vm_result=True, ensure_containerd_image_store_result=True)
 
-        provision = Provision(config=config, app_dpath=Path('/repo/app'), exe_dev=exe_dev)
+        provision = Provision(config_opts=make_config_opts(public=True), exe_dev=exe_dev)
 
         provision.run()
 
@@ -64,15 +74,14 @@ class TestProvision:
             'Enabled Docker containerd image store.\n'
             'Verifying Docker availability...\n'
             'Verifying Docker containerd image store...\n'
-            'Enabling public HTTP proxy for service: web\n'
+            'Enabling public HTTP proxy.\n'
             'Provision complete.\n'
         )
 
     def test_run_when_containerd_image_store_already_enabled(self, capsys):
-        config = LexeConfig(app_name='demo', vm_host_name='demo-vm', public_service=None)
         exe_dev = FakeExeDev(ensure_vm_result=False, ensure_containerd_image_store_result=False)
 
-        Provision(config=config, app_dpath=Path('/repo/app'), exe_dev=exe_dev).run()
+        Provision(config_opts=make_config_opts(), exe_dev=exe_dev).run()
 
         assert exe_dev.calls == [
             ('ensure_vm', 'demo-vm'),
@@ -95,10 +104,9 @@ class TestProvision:
 
 class TestDestroy:
     def test_run(self, capsys):
-        config = LexeConfig(app_name='demo', vm_host_name='demo-vm', public_service=None)
         exe_dev = FakeExeDev(destroy_vm_result=True)
 
-        Destroy(config=config, exe_dev=exe_dev).run()
+        Destroy(config_opts=make_config_opts(), exe_dev=exe_dev).run()
 
         assert exe_dev.calls == [('destroy_vm', 'demo-vm')]
         assert capsys.readouterr().out == (
@@ -108,10 +116,9 @@ class TestDestroy:
         )
 
     def test_run_when_vm_missing(self, capsys):
-        config = LexeConfig(app_name='demo', vm_host_name='demo-vm', public_service=None)
         exe_dev = FakeExeDev(destroy_vm_result=False)
 
-        Destroy(config=config, exe_dev=exe_dev).run()
+        Destroy(config_opts=make_config_opts(), exe_dev=exe_dev).run()
 
         assert exe_dev.calls == [('destroy_vm', 'demo-vm')]
         assert capsys.readouterr().out == (
@@ -135,8 +142,11 @@ class TestExeDev:
 
         assert ExeDev().ensure_vm('demo-vm') is True
         assert calls == [
-            ((('exe.dev', 'ls', '--json')), {'capture': True}),
-            ((('exe.dev', 'new', '--name', 'demo-vm', '--json')), {'capture': True}),
+            ((('exe.dev', 'ls', '--json')), {'capture': True, 'opts': CLIOpts()}),
+            (
+                (('exe.dev', 'new', '--name', 'demo-vm', '--json')),
+                {'capture': True, 'opts': CLIOpts()},
+            ),
         ]
 
     def test_wait_for_ssh_retries_until_success(self, monkeypatch):
@@ -156,15 +166,9 @@ class TestExeDev:
         ExeDev(wait_timeout_seconds=1, wait_interval_seconds=0).wait_for_ssh('demo-vm')
 
         assert len(calls) == 2
+        assert all(call[0] == ('demo-vm.exe.xyz', 'true') for call in calls)
         assert all(
-            call[0]
-            == (
-                '-o',
-                'StrictHostKeyChecking=accept-new',
-                'demo-vm.exe.xyz',
-                'true',
-            )
-            for call in calls
+            call[1] == {'capture': True, 'check': False, 'opts': CLIOpts()} for call in calls
         )
 
     def test_ensure_docker_retries_until_success(self, monkeypatch):
@@ -185,19 +189,12 @@ class TestExeDev:
 
         assert len(calls) == 2
         assert all(
-            call[0]
-            == (
-                '-o',
-                'StrictHostKeyChecking=accept-new',
-                'demo-vm.exe.xyz',
-                'docker',
-                'info',
-                '--format',
-                '{{.ServerVersion}}',
-            )
+            call[0] == ('demo-vm.exe.xyz', 'docker', 'info', '--format', '{{.ServerVersion}}')
             for call in calls
         )
-        assert all(call[1] == {'capture': True, 'check': False} for call in calls)
+        assert all(
+            call[1] == {'capture': True, 'check': False, 'opts': CLIOpts()} for call in calls
+        )
 
     def test_ensure_containerd_image_store_restarts_docker_when_changed(self, monkeypatch):
         calls = []
@@ -218,31 +215,25 @@ class TestExeDev:
         assert ExeDev().ensure_containerd_image_store('demo-vm')
         assert calls[0] == (
             (
-                '-o',
-                'StrictHostKeyChecking=accept-new',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'cat',
                 '/etc/docker/daemon.json',
             ),
-            {'capture': True, 'check': False},
+            {'capture': True, 'check': False, 'opts': CLIOpts()},
         )
         assert calls[1] == (
             (
-                '-o',
-                'StrictHostKeyChecking=accept-new',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'mkdir',
                 '-p',
                 '/etc/docker',
             ),
-            {},
+            {'opts': CLIOpts()},
         )
         assert calls[2] == (
             (
-                '-o',
-                'StrictHostKeyChecking=accept-new',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'tee',
@@ -251,19 +242,18 @@ class TestExeDev:
             {
                 'capture': True,
                 'input': '{\n  "features": {\n    "containerd-snapshotter": true\n  }\n}\n',
+                'opts': CLIOpts(),
             },
         )
         assert calls[3] == (
             (
-                '-o',
-                'StrictHostKeyChecking=accept-new',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'systemctl',
                 'restart',
                 'docker',
             ),
-            {'capture': True},
+            {'capture': True, 'opts': CLIOpts()},
         )
 
     def test_ensure_containerd_image_store_merges_existing_daemon_config(self, monkeypatch):
@@ -285,8 +275,6 @@ class TestExeDev:
         assert ExeDev().ensure_containerd_image_store('demo-vm')
         assert calls[2] == (
             (
-                '-o',
-                'StrictHostKeyChecking=accept-new',
                 'demo-vm.exe.xyz',
                 'sudo',
                 'tee',
@@ -306,6 +294,7 @@ class TestExeDev:
                     sort_keys=True,
                 )
                 + '\n',
+                'opts': CLIOpts(),
             },
         )
 
@@ -327,14 +316,12 @@ class TestExeDev:
         assert calls == [
             (
                 (
-                    '-o',
-                    'StrictHostKeyChecking=accept-new',
                     'demo-vm.exe.xyz',
                     'sudo',
                     'cat',
                     '/etc/docker/daemon.json',
                 ),
-                {'capture': True, 'check': False},
+                {'capture': True, 'check': False, 'opts': CLIOpts()},
             ),
         ]
 
@@ -356,15 +343,13 @@ class TestExeDev:
         assert calls == [
             (
                 (
-                    '-o',
-                    'StrictHostKeyChecking=accept-new',
                     'demo-vm.exe.xyz',
                     'docker',
                     'info',
                     '--format',
                     '{{.DriverStatus}}',
                 ),
-                {'capture': True},
+                {'capture': True, 'opts': CLIOpts()},
             ),
         ]
 
@@ -386,8 +371,8 @@ class TestExeDev:
 
         assert ExeDev().destroy_vm('demo-vm') is True
         assert calls == [
-            ((('exe.dev', 'ls', '--json')), {'capture': True}),
-            ((('exe.dev', 'rm', 'demo-vm')), {'capture': True}),
+            ((('exe.dev', 'ls', '--json')), {'capture': True, 'opts': CLIOpts()}),
+            ((('exe.dev', 'rm', 'demo-vm')), {'capture': True, 'opts': CLIOpts()}),
         ]
 
     def test_destroy_vm_is_noop_when_missing(self, monkeypatch):
@@ -400,4 +385,4 @@ class TestExeDev:
         monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
 
         assert ExeDev().destroy_vm('demo-vm') is False
-        assert calls == [((('exe.dev', 'ls', '--json')), {'capture': True})]
+        assert calls == [((('exe.dev', 'ls', '--json')), {'capture': True, 'opts': CLIOpts()})]

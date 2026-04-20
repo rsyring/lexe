@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
@@ -133,11 +134,19 @@ class LexeConfig(LexeBaseModel):
 
 
 class CLIOpts(LexeBaseModel):
-    ssh_ident_fpath: Path | None
-    ssh_host_key_check: bool
-    ssh_host_key_accept: bool
+    ssh_ident_fpath: Path | None = None
+    ssh_host_key_check: bool = True
+    ssh_known_hosts_manage: bool = True
+
+    @model_validator(mode='after')
+    def validate_host_key_opts(self) -> Self:
+        if not self.ssh_host_key_check and self.ssh_known_hosts_manage:
+            raise ValueError('ssh_known_hosts_manage requires ssh_host_key_check')
+
+        return self
 
 
+@dataclass(frozen=True)
 class ConfigOpts:
     config: LexeConfig
     opts: CLIOpts

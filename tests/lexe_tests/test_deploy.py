@@ -1,11 +1,11 @@
+from contextlib import nullcontext
 from datetime import date
-from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
 import pytest
 
-from lexe.config import Hook, HookConfig, LexeConfig
+from lexe.config import CLIOpts, ConfigOpts, LexeConfig
 from lexe.deploy import Deploy
 
 
@@ -13,6 +13,24 @@ class FakeDate:
     @staticmethod
     def today() -> date:
         return date(2026, 4, 19)
+
+
+def make_config_opts(tmp_path, *, services=None) -> ConfigOpts:
+    config = LexeConfig.model_validate(
+        {
+            'project': {'path': tmp_path, 'name': 'hello', 'vm-host': 'hello-vm'},
+            'services': services or {'web': {}},
+        },
+    )
+    return ConfigOpts(config=config, opts=CLIOpts())
+
+
+def make_test_cli_opts(key_fpath) -> CLIOpts:
+    return CLIOpts(
+        ssh_ident_fpath=key_fpath,
+        ssh_host_key_check=False,
+        ssh_known_hosts_manage=False,
+    )
 
 
 class TestDeploy:
@@ -40,9 +58,14 @@ class TestDeploy:
         monkeypatch.setattr('lexe.deploy.date', FakeDate)
         monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
 
-        config = LexeConfig(app_name='hello', vm_host_name='hello-vm', public_service=None)
-        with patch('lexe.deploy.docker_ssh_command', return_value=None):
-            Deploy(config=config, app_dpath=tmp_path).run()
+        with (
+            patch(
+                'lexe.deploy.docker_host_url',
+                return_value=nullcontext('ssh://hello-vm.exe.xyz'),
+            ),
+            patch('lexe.deploy.docker_client_env', return_value=nullcontext({})),
+        ):
+            Deploy(config_opts=make_config_opts(tmp_path)).run()
 
         image_ref = 'hello:v2026-04-19-abcdef1'
         compose_env = {
@@ -114,10 +137,8 @@ class TestDeploy:
 
         monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
 
-        config = LexeConfig(app_name='hello', vm_host_name='hello-vm', public_service=None)
-
         with pytest.raises(Exception, match='Git working tree is dirty'):
-            Deploy(config=config, app_dpath=tmp_path).run()
+            Deploy(config_opts=make_config_opts(tmp_path)).run()
 
     def test_run_appends_dirty_suffix_when_allowed(self, tmp_path, monkeypatch, capsys):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
@@ -138,9 +159,14 @@ class TestDeploy:
         monkeypatch.setattr('lexe.deploy.date', FakeDate)
         monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
 
-        config = LexeConfig(app_name='hello', vm_host_name='hello-vm', public_service=None)
-        with patch('lexe.deploy.docker_ssh_command', return_value=None):
-            Deploy(config=config, app_dpath=tmp_path, allow_dirty=True).run()
+        with (
+            patch(
+                'lexe.deploy.docker_host_url',
+                return_value=nullcontext('ssh://hello-vm.exe.xyz'),
+            ),
+            patch('lexe.deploy.docker_client_env', return_value=nullcontext({})),
+        ):
+            Deploy(config_opts=make_config_opts(tmp_path), allow_dirty=True).run()
 
         image_ref = 'hello:v2026-04-19-abcdef1-dirty'
         assert ('docker', 'build', '-t', image_ref, '.') in [call[0] for call in calls]
@@ -166,12 +192,22 @@ class TestDeploy:
 
         monkeypatch.setattr('lexe.deploy.date', FakeDate)
         monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
-        monkeypatch.setattr('lexe.deploy.use_exe_dev_test_key', lambda: True)
-        monkeypatch.setattr('lexe.deploy.exe_dev_test_key_fpath', lambda: key_fpath)
-
-        config = LexeConfig(app_name='hello', vm_host_name='hello-vm', public_service=None)
-        with patch('lexe.deploy.docker_ssh_command', return_value='ssh -i test-key'):
-            Deploy(config=config, app_dpath=tmp_path).run()
+        with (
+            patch(
+                'lexe.deploy.docker_host_url',
+                return_value=nullcontext('ssh://hello-vm.exe.xyz'),
+            ),
+            patch(
+                'lexe.deploy.docker_client_env',
+                return_value=nullcontext({'PATH': '/tmp/test-bin'}),
+            ),
+        ):
+            Deploy(
+                ConfigOpts(
+                    config=make_config_opts(tmp_path).config,
+                    opts=make_test_cli_opts(key_fpath),
+                ),
+            ).run()
 
         assert calls[3] == (
             (
@@ -184,7 +220,7 @@ class TestDeploy:
             ),
             {
                 'cwd': tmp_path,
-                'env': {'SSH_STRICT_HOST_KEY_CHECKING': 'accept-new'},
+                'env': {'SSH_STRICT_HOST_KEY_CHECKING': 'no'},
             },
         )
 
@@ -207,17 +243,22 @@ class TestDeploy:
         monkeypatch.setattr('lexe.deploy.date', FakeDate)
         monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
 
-        config = LexeConfig(
-            app_name='hello',
-            vm_host_name='hello-vm',
-            hooks=HookConfig(
-                pre_start=(Hook(service='web', command='echo pre'),),
-                post_start=(Hook(service='worker', command=('python', '-c', 'print(1)')),),
+        with (
+            patch(
+                'lexe.deploy.docker_host_url',
+                return_value=nullcontext('ssh://hello-vm.exe.xyz'),
             ),
-        )
-
-        with patch('lexe.deploy.docker_ssh_command', return_value=None):
-            Deploy(config=config, app_dpath=tmp_path).run()
+            patch('lexe.deploy.docker_client_env', return_value=nullcontext({})),
+        ):
+            Deploy(
+                config_opts=make_config_opts(
+                    tmp_path,
+                    services={
+                        'web': {'hooks': {'start-pre': 'echo pre'}},
+                        'worker': {'hooks': {'start-post': [['python', '-c', 'print(1)']]}},
+                    },
+                ),
+            ).run()
 
         hook_calls = [call[0] for call in calls if 'run' in call[0]]
         assert (
@@ -283,14 +324,19 @@ class TestDeploy:
         monkeypatch.setattr('lexe.deploy.date', FakeDate)
         monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
 
-        config = LexeConfig(
-            app_name='hello',
-            vm_host_name='hello-vm',
-            hooks=HookConfig(post_start=(Hook(service='web', command='echo post'),)),
-        )
-
-        with patch('lexe.deploy.docker_ssh_command', return_value=None):
-            Deploy(config=config, app_dpath=tmp_path).run()
+        with (
+            patch(
+                'lexe.deploy.docker_host_url',
+                return_value=nullcontext('ssh://hello-vm.exe.xyz'),
+            ),
+            patch('lexe.deploy.docker_client_env', return_value=nullcontext({})),
+        ):
+            Deploy(
+                config_opts=make_config_opts(
+                    tmp_path,
+                    services={'web': {'hooks': {'start-post': 'echo post'}}},
+                ),
+            ).run()
 
         assert (
             'Post-start hook 1 failed on service web with exit code 12.\n'

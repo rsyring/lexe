@@ -1,11 +1,10 @@
 from dataclasses import dataclass, field
 import json
-from pathlib import Path
 import time
 
 import click
 
-from lexe.config import LexeConfig
+from lexe.config import CLIOpts, ConfigOpts, LexeConfig
 from lexe.procs import ssh
 
 
@@ -20,11 +19,12 @@ class ExeDevVm:
 
 @dataclass
 class ExeDev:
+    opts: CLIOpts = field(default_factory=CLIOpts)
     wait_timeout_seconds: int = 120
     wait_interval_seconds: int = 2
 
     def list_vms(self) -> dict[str, ExeDevVm]:
-        result = ssh('exe.dev', 'ls', '--json', capture=True)
+        result = ssh('exe.dev', 'ls', '--json', capture=True, opts=self.opts)
         payload = json.loads(result.stdout)
         return {
             vm['vm_name']: ExeDevVm(vm_name=vm['vm_name'], status=vm['status'])
@@ -35,20 +35,14 @@ class ExeDev:
         if vm_name in self.list_vms():
             return False
 
-        ssh('exe.dev', 'new', '--name', vm_name, '--json', capture=True)
+        ssh('exe.dev', 'new', '--name', vm_name, '--json', capture=True, opts=self.opts)
         return True
 
     def vm_ssh_dest(self, vm_name: str) -> str:
         return f'{vm_name}.exe.xyz'
 
     def host_ssh(self, vm_name: str, *args, **kwargs):
-        return ssh(
-            '-o',
-            'StrictHostKeyChecking=accept-new',
-            self.vm_ssh_dest(vm_name),
-            *args,
-            **kwargs,
-        )
+        return ssh(self.vm_ssh_dest(vm_name), *args, opts=self.opts, **kwargs)
 
     def wait_for_ssh(self, vm_name: str) -> None:
         deadline = time.monotonic() + self.wait_timeout_seconds
@@ -144,66 +138,97 @@ class ExeDev:
             )
 
     def make_public(self, vm_name: str) -> None:
-        ssh('exe.dev', 'share', 'set-public', vm_name, capture=True)
+        ssh('exe.dev', 'share', 'set-public', vm_name, capture=True, opts=self.opts)
 
     def destroy_vm(self, vm_name: str) -> bool:
         if vm_name not in self.list_vms():
             return False
 
-        ssh('exe.dev', 'rm', vm_name, capture=True)
+        ssh('exe.dev', 'rm', vm_name, capture=True, opts=self.opts)
         return True
 
 
 @dataclass
 class Provision:
-    config: LexeConfig
-    app_dpath: Path
-    exe_dev: ExeDev = field(default_factory=ExeDev)
+    config_opts: ConfigOpts
+    exe_dev: ExeDev | None = None
+
+    def __post_init__(self) -> None:
+        if self.exe_dev is None:
+            self.exe_dev = ExeDev(opts=self.config_opts.opts)
+
+    @property
+    def config(self) -> LexeConfig:
+        return self.config_opts.config
+
+    @property
+    def app_name(self) -> str:
+        return self.config.project.name
+
+    @property
+    def vm_host_name(self) -> str:
+        return self.config.project.vm_host
 
     def run(self) -> None:
-        click.echo(f'Loaded lexe config for {self.config.app_name} ({self.config.vm_host_name}).')
+        click.echo(f'Loaded lexe config for {self.app_name} ({self.vm_host_name}).')
 
-        created = self.exe_dev.ensure_vm(self.config.vm_host_name)
+        created = self.exe_dev.ensure_vm(self.vm_host_name)
         if created:
-            click.echo(f'Created exe.dev VM: {self.config.vm_host_name}')
+            click.echo(f'Created exe.dev VM: {self.vm_host_name}')
         else:
-            click.echo(f'Using existing exe.dev VM: {self.config.vm_host_name}')
+            click.echo(f'Using existing exe.dev VM: {self.vm_host_name}')
 
         click.echo('Waiting for SSH reachability...')
-        self.exe_dev.wait_for_ssh(self.config.vm_host_name)
+        self.exe_dev.wait_for_ssh(self.vm_host_name)
 
         click.echo('Ensuring Docker uses the containerd image store...')
-        changed = self.exe_dev.ensure_containerd_image_store(self.config.vm_host_name)
+        changed = self.exe_dev.ensure_containerd_image_store(self.vm_host_name)
         if changed:
             click.echo('Enabled Docker containerd image store.')
         else:
             click.echo('Docker containerd image store already enabled.')
 
         click.echo('Verifying Docker availability...')
-        self.exe_dev.ensure_docker(self.config.vm_host_name)
+        self.exe_dev.ensure_docker(self.vm_host_name)
 
         click.echo('Verifying Docker containerd image store...')
-        self.exe_dev.verify_containerd_image_store(self.config.vm_host_name)
+        self.exe_dev.verify_containerd_image_store(self.vm_host_name)
 
-        if self.config.public_service:
-            click.echo(f'Enabling public HTTP proxy for service: {self.config.public_service}')
-            self.exe_dev.make_public(self.config.vm_host_name)
+        if self.config.public:
+            click.echo('Enabling public HTTP proxy.')
+            self.exe_dev.make_public(self.vm_host_name)
 
         click.echo('Provision complete.')
 
 
 @dataclass
 class Destroy:
-    config: LexeConfig
-    exe_dev: ExeDev = field(default_factory=ExeDev)
+    config_opts: ConfigOpts
+    exe_dev: ExeDev | None = None
+
+    def __post_init__(self) -> None:
+        if self.exe_dev is None:
+            self.exe_dev = ExeDev(opts=self.config_opts.opts)
+
+    @property
+    def config(self) -> LexeConfig:
+        return self.config_opts.config
+
+    @property
+    def app_name(self) -> str:
+        return self.config.project.name
+
+    @property
+    def vm_host_name(self) -> str:
+        return self.config.project.vm_host
 
     def run(self) -> None:
-        click.echo(f'Loaded lexe config for {self.config.app_name} ({self.config.vm_host_name}).')
+        click.echo(f'Loaded lexe config for {self.app_name} ({self.vm_host_name}).')
 
-        destroyed = self.exe_dev.destroy_vm(self.config.vm_host_name)
+        destroyed = self.exe_dev.destroy_vm(self.vm_host_name)
         if destroyed:
-            click.echo(f'Destroyed exe.dev VM: {self.config.vm_host_name}')
+            click.echo(f'Destroyed exe.dev VM: {self.vm_host_name}')
         else:
-            click.echo(f'No exe.dev VM found: {self.config.vm_host_name}')
+            click.echo(f'No exe.dev VM found: {self.vm_host_name}')
 
         click.echo('Destroy complete.')

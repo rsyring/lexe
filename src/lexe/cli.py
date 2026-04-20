@@ -19,51 +19,51 @@ pass_config_opts = click.make_pass_decorator(ConfigOpts)
     show_envvar=True,
 )
 @click.option('-i', '--ssh-key', type=click.Path(path_type=Path, dir_okay=False, exists=True))
+@click.option('--ssh-host-key-check/--no-ssh-host-key-check', default=True)
+@click.option('--ssh-known-hosts-manage/--no-ssh-known-hosts-manage', default=True)
 @click.pass_context
-def main(ctx: click.Context, config_fpath: Path, ssh_key: Path) -> None:
+def main(
+    ctx: click.Context,
+    config_fpath: Path,
+    ssh_key: Path | None,
+    ssh_host_key_check: bool,
+    ssh_known_hosts_manage: bool,
+) -> None:
+    if not ssh_host_key_check and ssh_known_hosts_manage:
+        raise click.ClickException(
+            '--ssh-known-hosts-manage requires --ssh-host-key-check',
+        )
+
     ctx.obj = ConfigOpts(
-        LexeConfig.find_lexe(config_fpath),
-        CLIOpts(ssh_key=ssh_key),
+        config=LexeConfig.find_lexe(config_fpath),
+        opts=CLIOpts(
+            ssh_ident_fpath=ssh_key,
+            ssh_host_key_check=ssh_host_key_check,
+            ssh_known_hosts_manage=ssh_known_hosts_manage,
+        ),
     )
 
 
 @main.command()
 @pass_config_opts
 def provision(config_opts: ConfigOpts) -> None:
-    Provision(ConfigOpts).run()
+    Provision(config_opts).run()
 
 
 @main.command()
-@click.option(
-    '--config-fpath',
-    type=click.Path(path_type=Path),
-    default=Path('lexe.yaml'),
-)
-def destroy(config_fpath: Path) -> None:
-    config = LexeConfig.find_lexe(config_fpath)
-    Destroy(config=config).run()
+@pass_config_opts
+def destroy(config_opts: ConfigOpts) -> None:
+    Destroy(config_opts).run()
 
 
 @main.command()
-@click.option(
-    '--config-fpath',
-    type=click.Path(path_type=Path),
-    default=Path('lexe.yaml'),
-)
 @click.option('--allow-dirty', is_flag=True)
-def deploy(config_fpath: Path, allow_dirty: bool) -> None:
-    config_fpath = find_lexe_fpath(config_fpath)
-    config = LexeConfig.from_yaml(config_fpath)
-    Deploy(config=config, app_dpath=config_fpath.parent, allow_dirty=allow_dirty).run()
+@pass_config_opts
+def deploy(config_opts: ConfigOpts, allow_dirty: bool) -> None:
+    Deploy(config_opts, allow_dirty=allow_dirty).run()
 
 
 @main.command()
-@click.option(
-    '--config-fpath',
-    type=click.Path(path_type=Path),
-    default=Path('lexe.yaml'),
-)
-def status(config_fpath: Path) -> None:
-    config_fpath = find_lexe_fpath(config_fpath)
-    config = LexeConfig.from_yaml(config_fpath)
-    Status(config=config, app_dpath=config_fpath.parent).run()
+@pass_config_opts
+def status(config_opts: ConfigOpts) -> None:
+    Status(config_opts).run()

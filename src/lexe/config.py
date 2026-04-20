@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-import os
 from pathlib import Path
-from typing import Any
+from typing import Self
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 import yaml
+
+from .exc import ConfigError
 
 
 def find_upwards(d: Path, filename: str) -> Path | None:
@@ -36,117 +37,95 @@ def find_lexe_fpath(start_at: Path) -> Path:
     return config_fpath
 
 
-@dataclass(frozen=True)
-class Hook:
-    service: str
-    command: str | tuple[str, ...]
+HookCommand = str | list[str]
+
+
+def _normalize_hook_commands(value: object) -> list[HookCommand]:
+    if value is None:
+        return []
+
+    if isinstance(value, str):
+        return [value]
+
+    if not isinstance(value, list):
+        raise ValueError('hook commands must be a string, list[str], or list[list[str]]')
+
+    if all(isinstance(item, str) for item in value):
+        return value
+
+    if all(isinstance(item, list) and all(isinstance(arg, str) for arg in item) for item in value):
+        return value
+
+    raise ValueError('hook commands must be a string, list[str], or list[list[str]]')
+
+
+class LexeBaseModel(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+
+class ProjectConfig(LexeBaseModel):
+    name: str
+    vm_host: str = Field(alias='vm-host')
+
+
+class PublicConfig(LexeBaseModel):
+    port: int | None = None
+    healthcheck_url: str | None = Field(default=None, alias='healthcheck-url')
+
+
+class ServiceHooksConfig(LexeBaseModel):
+    start_pre: list[HookCommand] = Field(default_factory=list, alias='start-pre')
+    start_post: list[HookCommand] = Field(default_factory=list, alias='start-post')
+
+    @field_validator('start_pre', 'start_post', mode='before')
+    @classmethod
+    def normalize_hook_commands(cls, value: object) -> list[HookCommand]:
+        return _normalize_hook_commands(value)
+
+
+class ServiceConfig(LexeBaseModel):
+    deploy: str = 'always'
+    hooks: ServiceHooksConfig = Field(default_factory=ServiceHooksConfig)
+
+    @model_validator(mode='before')
+    @classmethod
+    def none_to_empty_dict(cls, value: object) -> object:
+        if value is None:
+            return {}
+
+        return value
+
+
+class DeployHooksConfig(LexeBaseModel):
+    deploy_pre: list[HookCommand] = Field(default_factory=list, alias='deploy-pre')
+    deploy_post: list[HookCommand] = Field(default_factory=list, alias='deploy-post')
+
+    @field_validator('deploy_pre', 'deploy_post', mode='before')
+    @classmethod
+    def normalize_hook_commands(cls, value: object) -> list[HookCommand]:
+        return _normalize_hook_commands(value)
+
+
+class LexeConfig(LexeBaseModel):
+    project: ProjectConfig
+    public: PublicConfig | None = None
+    services: dict[str, ServiceConfig] = Field(min_length=1)
+    hooks: DeployHooksConfig = Field(default_factory=DeployHooksConfig)
 
     @classmethod
-    def from_raw(cls, raw: object, *, default_service: str) -> Hook:
-        if isinstance(raw, str):
-            return cls(service=default_service, command=raw)
-
-        if isinstance(raw, list):
-            if not raw or not all(isinstance(item, str) for item in raw):
-                raise ValueError('Hook command lists must be non-empty lists of strings.')
-            return cls(service=default_service, command=tuple(raw))
-
-        if isinstance(raw, dict):
-            service = raw.get('service', default_service)
-            if not isinstance(service, str) or not service:
-                raise ValueError('Hook service must be a non-empty string.')
-            if 'command' not in raw:
-                raise ValueError('Hook mappings must include a command field.')
-
-            command = cls.from_raw(raw['command'], default_service=service).command
-            return cls(service=service, command=command)
-
-        raise ValueError('Hook values must be a string, list of strings, or mapping.')
-
-    def compose_run_args(self) -> tuple[str, ...]:
-        if isinstance(self.command, str):
-            return ('--entrypoint', 'sh', self.service, '-lc', self.command)
-        return ('--entrypoint', self.command[0], self.service, *self.command[1:])
-
-    def display_command(self) -> str:
-        if isinstance(self.command, str):
-            return self.command
-        return ' '.join(self.command)
-
-
-def parse_hooks(raw: object, *, default_service: str) -> tuple[Hook, ...]:
-    if raw is None:
-        return ()
-
-    if isinstance(raw, (str, dict)):
-        return (Hook.from_raw(raw, default_service=default_service),)
-
-    if isinstance(raw, list):
-        if raw and all(isinstance(item, str) for item in raw):
-            return (Hook.from_raw(raw, default_service=default_service),)
-        return tuple(Hook.from_raw(item, default_service=default_service) for item in raw)
-
-    raise ValueError('Hook phase values must be a command or list of commands.')
-
-
-@dataclass(frozen=True)
-class HookConfig:
-    pre_start: tuple[Hook, ...] = ()
-    post_start: tuple[Hook, ...] = ()
+    def from_mapping(cls, payload: dict[str, object]) -> Self:
+        try:
+            return cls.model_validate(payload)
+        except ValidationError as e:
+            raise ConfigError(e.errors()) from e
 
     @classmethod
-    def from_raw(cls, raw: object, *, default_service: str) -> HookConfig:
-        if raw is None:
-            return cls()
-        if not isinstance(raw, dict):
-            raise ValueError('hooks must be a mapping.')
-
-        return cls(
-            pre_start=parse_hooks(raw.get('pre-start'), default_service=default_service),
-            post_start=parse_hooks(raw.get('post-start'), default_service=default_service),
-        )
-
-
-@dataclass(frozen=True)
-class LexeConfig:
-    app_name: str
-    vm_host_name: str
-    public_service: str | None = None
-    healthcheck_url: str | None = None
-    hooks: HookConfig = field(default_factory=HookConfig)
-
-    @property
-    def default_service(self) -> str:
-        return self.public_service or 'web'
-
-    @classmethod
-    def from_mapping(cls, payload: dict[str, Any]) -> LexeConfig:
-        public_service = payload.get('public-service')
-        healthcheck_url = payload.get('healthcheck-url')
-
-        if public_service is not None and not isinstance(public_service, str):
-            raise ValueError('public-service must be a string when set.')
-        if healthcheck_url is not None and not isinstance(healthcheck_url, str):
-            raise ValueError('healthcheck-url must be a string when set.')
-
-        return cls(
-            app_name=payload['app-name'],
-            vm_host_name=payload['vm-host-name'],
-            public_service=public_service,
-            healthcheck_url=healthcheck_url,
-            hooks=HookConfig.from_raw(
-                payload.get('hooks'),
-                default_service=public_service or 'web',
-            ),
-        )
-
-    @classmethod
-    def from_yaml(cls, yaml_fpath: os.PathLike) -> LexeConfig:
-        config = yaml.safe_load(Path(yaml_fpath).read_text()) or {}
+    def from_yaml(cls, yaml_fpath: Path) -> Self:
+        config = yaml.safe_load(yaml_fpath.read_text()) or {}
         if not isinstance(config, dict):
-            raise ValueError('lexe.yaml must contain a mapping at the top level.')
+            raise ValueError('lexe.yaml format is invalid, check docs for example config')
         return cls.from_mapping(config)
 
     @classmethod
-    def find_lexe(cls, start_at: Path) -> LexeConfig:
+    def find_lexe(cls, start_at: Path) -> Self:
         return cls.from_yaml(find_lexe_fpath(start_at))

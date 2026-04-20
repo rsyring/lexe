@@ -1,0 +1,10 @@
+project:
+  name: dummy
+  vm-host: dummy
+
+services:
+  web:
+
+hooks:
+  deploy-pre:
+    - [echo, foo]

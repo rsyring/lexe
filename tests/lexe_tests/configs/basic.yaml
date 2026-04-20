@@ -1,0 +1,20 @@
+project:
+  name: ncc1701d
+  vm-host: ncc1701d-starfleet
+
+public:
+    # Docker compose config must expose this port on the service it wants public
+    port: 8000
+    # Healthcheck URL only matters if the service is public.  If you want healthchecks on internal
+    # services, set those up in compose and check docker service for the health status.
+    healthcheck-url: https://ncc1701d-starfleet.exe.xyz/healthy
+
+services:
+  db:
+    deploy: contingent
+  schedule:
+  web:
+    hooks:
+      # hooks fire in relation to the web service
+      start-pre: python hooks/log-event.py
+      start-post: python hooks/log-event.py

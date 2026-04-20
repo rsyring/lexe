@@ -1,54 +1,87 @@
-from lexe.config import LexeConfig
+from pathlib import Path
+
+import pytest
+
+from lexe.config import ConfigError, LexeConfig
+
+
+configs_dpath = Path(__file__).parent / 'configs'
+
+
+def config_yaml(fname: str):
+    return LexeConfig.from_yaml(configs_dpath / fname)
 
 
 class TestLexeConfig:
-    def test_from_yaml(self, tmp_path):
-        config_fpath = tmp_path / 'lexe.yaml'
-        config_fpath.write_text(
-            'app-name: demo\nvm-host-name: demo-vm\npublic-service: web\n',
-        )
+    def test_basic(self):
+        config = config_yaml('basic.yaml')
 
-        config = LexeConfig.from_yaml(config_fpath)
+        assert config.project.name == 'ncc1701d'
+        assert config.project.vm_host == 'ncc1701d-starfleet'
 
-        assert config.app_name == 'demo'
-        assert config.vm_host_name == 'demo-vm'
-        assert config.public_service == 'web'
+        assert config.public.port == 8000
+        assert config.public.healthcheck_url == 'https://ncc1701d-starfleet.exe.xyz/healthy'
 
-    def test_from_yaml_parses_healthcheck_and_hooks(self, tmp_path):
-        config_fpath = tmp_path / 'lexe.yaml'
-        config_fpath.write_text(
-            '\n'.join(
-                [
-                    'app-name: demo',
-                    'vm-host-name: demo-vm',
-                    'healthcheck-url: https://demo.exe.xyz/health',
-                    'hooks:',
-                    '  pre-start: echo pre',
-                    '  post-start:',
-                    '    - python',
-                    '    - -c',
-                    "    - print('post')",
-                    '',
-                ],
-            ),
-        )
+        assert set(config.services) == {'db', 'schedule', 'web'}
 
-        config = LexeConfig.from_yaml(config_fpath)
+        assert config.services['db'].deploy == 'contingent'
+        assert config.services['db'].hooks.start_pre == []
+        assert config.services['db'].hooks.start_post == []
 
-        assert config.healthcheck_url == 'https://demo.exe.xyz/health'
-        assert len(config.hooks.pre_start) == 1
-        assert config.hooks.pre_start[0].service == 'web'
-        assert config.hooks.pre_start[0].command == 'echo pre'
-        assert len(config.hooks.post_start) == 1
-        assert config.hooks.post_start[0].command == ('python', '-c', "print('post')")
+        assert config.services['schedule'].deploy == 'always'
+        assert config.services['schedule'].hooks.start_pre == []
+        assert config.services['schedule'].hooks.start_post == []
 
-    def test_find_lexe(self, tmp_path):
-        app_dpath = tmp_path / 'app'
-        nested_dpath = app_dpath / 'deploy'
-        nested_dpath.mkdir(parents=True)
-        (app_dpath / 'lexe.yaml').write_text('app-name: demo\nvm-host-name: demo-vm\n')
+        assert config.services['web'].deploy == 'always'
+        assert config.services['web'].hooks.start_pre == ['python hooks/log-event.py']
+        assert config.services['web'].hooks.start_post == ['python hooks/log-event.py']
 
-        config = LexeConfig.find_lexe(nested_dpath)
+        assert config.hooks.deploy_pre == []
+        assert config.hooks.deploy_post == []
 
-        assert config.app_name == 'demo'
-        assert config.vm_host_name == 'demo-vm'
+    def test_hooks_without_public(self):
+        config = config_yaml('hooks.yaml')
+
+        assert config.public is None
+
+        assert config.services['str-single'].hooks.start_pre == ['echo foo']
+        assert config.services['str-single'].hooks.start_post == []
+
+        assert config.services['str-multi'].hooks.start_pre == []
+        assert config.services['str-multi'].hooks.start_post == ['echo foo', 'echo bar']
+
+        assert config.services['arg-multi'].hooks.start_pre == [
+            ['echo', 'foo'],
+            ['echo', 'bar'],
+        ]
+        assert config.services['arg-multi'].hooks.start_post == []
+
+        assert config.hooks.deploy_pre == ['python hooks/log-event.py']
+        assert config.hooks.deploy_post == ['python hooks/log-event.py']
+
+        config = config_yaml('hooks2.yaml')
+        assert config.hooks.deploy_pre == [['echo', 'foo']]
+
+    def test_project_required(self):
+        with pytest.raises(ConfigError) as raised:
+            config_yaml('project-missing.yaml')
+
+        assert raised.value.errors() == [
+            'project: missing',
+        ]
+
+    def test_services_required(self):
+        with pytest.raises(ConfigError) as raised:
+            config_yaml('services-missing.yaml')
+
+        assert raised.value.errors() == [
+            'services: missing',
+        ]
+
+    def test_services_must_not_be_empty(self):
+        with pytest.raises(ConfigError) as raised:
+            config_yaml('services-empty.yaml')
+
+        assert raised.value.errors() == [
+            'services: at least one service is required',
+        ]

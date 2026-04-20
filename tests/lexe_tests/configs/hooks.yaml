@@ -1,0 +1,25 @@
+project:
+  name: dummy
+  vm-host: dummy
+
+services:
+  str-single:
+    hooks:
+      start-pre: echo foo
+  str-multi:
+    hooks:
+      start-post:
+        - echo foo
+        - echo bar
+  arg-multi:
+    hooks:
+      # Could help avoid shell quoting issues.  But, no single version of this b/c it would make
+      # str-multi and arg-single ambiguious.
+      start-pre:
+        - [echo, foo]
+        - [echo, bar]
+hooks:
+  # hooks fire pre and post deploy, once per deploy
+  deploy-pre: python hooks/log-event.py
+  deploy-post:
+    - python hooks/log-event.py

@@ -130,3 +130,14 @@ class LexeConfig(LexeBaseModel):
     @classmethod
     def find_lexe(cls, start_at: Path) -> Self:
         return cls.from_yaml(find_lexe_fpath(start_at))
+
+
+class CLIOpts(LexeBaseModel):
+    ssh_ident_fpath: Path | None
+    ssh_host_key_check: bool
+    ssh_host_key_accept: bool
+
+
+class ConfigOpts:
+    config: LexeConfig
+    opts: CLIOpts

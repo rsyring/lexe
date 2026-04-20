@@ -2,27 +2,35 @@ from pathlib import Path
 
 import click
 
-from lexe.config import LexeConfig, find_lexe_fpath
+from lexe.config import CLIOpts, ConfigOpts, LexeConfig
 from lexe.deploy import Deploy
 from lexe.provision import Destroy, Provision
 from lexe.status import Status
 
 
-@click.group()
-def main() -> None:
-    pass
+pass_config_opts = click.make_pass_decorator(ConfigOpts)
 
 
-@main.command()
+@click.group(context_settings={'auto_envvar_prefix': 'lexe'})
 @click.option(
     '--config-fpath',
     type=click.Path(path_type=Path),
     default=Path('lexe.yaml'),
+    show_envvar=True,
 )
-def provision(config_fpath: Path) -> None:
-    config_fpath = find_lexe_fpath(config_fpath)
-    config = LexeConfig.from_yaml(config_fpath)
-    Provision(config=config, app_dpath=config_fpath.parent).run()
+@click.option('-i', '--ssh-key', type=click.Path(path_type=Path, dir_okay=False, exists=True))
+@click.pass_context
+def main(ctx: click.Context, config_fpath: Path, ssh_key: Path) -> None:
+    ctx.obj = ConfigOpts(
+        LexeConfig.find_lexe(config_fpath),
+        CLIOpts(ssh_key=ssh_key),
+    )
+
+
+@main.command()
+@pass_config_opts
+def provision(config_opts: ConfigOpts) -> None:
+    Provision(ConfigOpts).run()
 
 
 @main.command()

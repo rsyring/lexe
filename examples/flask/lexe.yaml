@@ -8,6 +8,7 @@ public:
 
 services:
   redis:
+    deploy: contingent
   web:
     hooks:
       start-pre: python hooks/log-event.py

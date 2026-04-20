@@ -34,7 +34,7 @@ def make_test_cli_opts(key_fpath) -> CLIOpts:
 
 
 class TestDeploy:
-    def test_run(self, tmp_path, monkeypatch, capsys):
+    def test_run(self, tmp_path, capsys):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
             (tmp_path / name).write_text('x')
 
@@ -55,10 +55,9 @@ class TestDeploy:
                 )
             return CompletedProcess(args, 0, stdout='', stderr='')
 
-        monkeypatch.setattr('lexe.deploy.date', FakeDate)
-        monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
-
         with (
+            patch('lexe.deploy.date', FakeDate),
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
             patch(
                 'lexe.deploy.docker_host_url',
                 return_value=nullcontext('ssh://hello-vm.exe.xyz'),
@@ -95,6 +94,7 @@ class TestDeploy:
                         '90',
                         '--force-recreate',
                         '--remove-orphans',
+                        'web',
                     )
                 ),
                 {'cwd': tmp_path, 'env': compose_env},
@@ -126,7 +126,71 @@ class TestDeploy:
             'Deploy complete.\n'
         )
 
-    def test_run_requires_clean_git_worktree_by_default(self, tmp_path, monkeypatch):
+    def test_run_targets_only_always_services(self, tmp_path):
+        for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
+            (tmp_path / name).write_text('x')
+
+        calls = []
+
+        def fake_sub_run(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args == ('git', 'status', '--short'):
+                return CompletedProcess(args, 0, stdout='', stderr='')
+            if args == ('git', 'rev-parse', 'HEAD'):
+                return CompletedProcess(args, 0, stdout='abcdef1234567890\n', stderr='')
+            if args[-1] == 'ps':
+                return CompletedProcess(args, 0, stdout='', stderr='')
+            return CompletedProcess(args, 0, stdout='', stderr='')
+
+        with (
+            patch('lexe.deploy.date', FakeDate),
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
+            patch(
+                'lexe.deploy.docker_host_url',
+                return_value=nullcontext('ssh://hello-vm.exe.xyz'),
+            ),
+            patch('lexe.deploy.docker_client_env', return_value=nullcontext({})),
+        ):
+            Deploy(
+                config_opts=make_config_opts(
+                    tmp_path,
+                    services={
+                        'db': {'deploy': 'contingent'},
+                        'web': {},
+                        'schedule': {},
+                    },
+                ),
+            ).run()
+
+        assert (
+            (
+                'docker',
+                'compose',
+                '-f',
+                'compose.yaml',
+                '-f',
+                'compose.server.yaml',
+                'up',
+                '-d',
+                '--wait',
+                '--wait-timeout',
+                '90',
+                '--force-recreate',
+                '--remove-orphans',
+                'web',
+                'schedule',
+            ),
+            {
+                'cwd': tmp_path,
+                'env': {
+                    'COMPOSE_PROJECT_NAME': 'hello',
+                    'DOCKER_HOST': 'ssh://hello-vm.exe.xyz',
+                    'LEXE_IMAGE': 'hello:v2026-04-19-abcdef1',
+                },
+            },
+        ) in calls
+
+    def test_run_requires_clean_git_worktree_by_default(self, tmp_path):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
             (tmp_path / name).write_text('x')
 
@@ -135,12 +199,33 @@ class TestDeploy:
                 return CompletedProcess(args, 0, stdout=' M Dockerfile\n', stderr='')
             raise AssertionError('unexpected command')
 
-        monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
-
-        with pytest.raises(Exception, match='Git working tree is dirty'):
+        with (
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
+            pytest.raises(Exception, match='Git working tree is dirty'),
+        ):
             Deploy(config_opts=make_config_opts(tmp_path)).run()
 
-    def test_run_appends_dirty_suffix_when_allowed(self, tmp_path, monkeypatch, capsys):
+    def test_run_requires_direct_deploy_service(self, tmp_path):
+        for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
+            (tmp_path / name).write_text('x')
+
+        def fake_sub_run(*args, **kwargs):
+            if args == ('git', 'status', '--short'):
+                return CompletedProcess(args, 0, stdout='', stderr='')
+            raise AssertionError('unexpected command')
+
+        with (
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
+            pytest.raises(Exception, match='No services are configured for direct deploy'),
+        ):
+            Deploy(
+                config_opts=make_config_opts(
+                    tmp_path,
+                    services={'db': {'deploy': 'contingent'}},
+                ),
+            ).run()
+
+    def test_run_appends_dirty_suffix_when_allowed(self, tmp_path, capsys):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
             (tmp_path / name).write_text('x')
 
@@ -156,10 +241,9 @@ class TestDeploy:
                 return CompletedProcess(args, 0, stdout='', stderr='')
             return CompletedProcess(args, 0, stdout='', stderr='')
 
-        monkeypatch.setattr('lexe.deploy.date', FakeDate)
-        monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
-
         with (
+            patch('lexe.deploy.date', FakeDate),
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
             patch(
                 'lexe.deploy.docker_host_url',
                 return_value=nullcontext('ssh://hello-vm.exe.xyz'),
@@ -172,7 +256,7 @@ class TestDeploy:
         assert ('docker', 'build', '-t', image_ref, '.') in [call[0] for call in calls]
         assert f'Deploying {image_ref} to hello-vm.exe.xyz.\n' in capsys.readouterr().out
 
-    def test_run_uses_test_key_for_docker_pussh(self, tmp_path, monkeypatch):
+    def test_run_uses_test_key_for_docker_pussh(self, tmp_path):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
             (tmp_path / name).write_text('x')
         key_fpath = tmp_path / 'test-key'
@@ -190,9 +274,9 @@ class TestDeploy:
                 return CompletedProcess(args, 0, stdout='', stderr='')
             return CompletedProcess(args, 0, stdout='', stderr='')
 
-        monkeypatch.setattr('lexe.deploy.date', FakeDate)
-        monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
         with (
+            patch('lexe.deploy.date', FakeDate),
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
             patch(
                 'lexe.deploy.docker_host_url',
                 return_value=nullcontext('ssh://hello-vm.exe.xyz'),
@@ -224,7 +308,7 @@ class TestDeploy:
             },
         )
 
-    def test_run_executes_hooks(self, tmp_path, monkeypatch, capsys):
+    def test_run_executes_hooks_for_direct_deploy_services_only(self, tmp_path, capsys):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
             (tmp_path / name).write_text('x')
 
@@ -240,10 +324,9 @@ class TestDeploy:
                 return CompletedProcess(args, 0, stdout='', stderr='')
             return CompletedProcess(args, 0, stdout='', stderr='')
 
-        monkeypatch.setattr('lexe.deploy.date', FakeDate)
-        monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
-
         with (
+            patch('lexe.deploy.date', FakeDate),
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
             patch(
                 'lexe.deploy.docker_host_url',
                 return_value=nullcontext('ssh://hello-vm.exe.xyz'),
@@ -254,6 +337,10 @@ class TestDeploy:
                 config_opts=make_config_opts(
                     tmp_path,
                     services={
+                        'db': {
+                            'deploy': 'contingent',
+                            'hooks': {'start-pre': 'echo skip'},
+                        },
                         'web': {'hooks': {'start-pre': 'echo pre'}},
                         'worker': {'hooks': {'start-post': [['python', '-c', 'print(1)']]}},
                     },
@@ -297,9 +384,10 @@ class TestDeploy:
             '-c',
             'print(1)',
         ) in hook_calls
+        assert not any(call[-3] == 'db' for call in hook_calls)
         assert 'Running pre-start hook 1 on service web: echo pre\n' in capsys.readouterr().out
 
-    def test_post_start_hook_failure_is_reported(self, tmp_path, monkeypatch, capsys):
+    def test_post_start_hook_failure_is_reported(self, tmp_path, capsys):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
             (tmp_path / name).write_text('x')
 
@@ -321,10 +409,9 @@ class TestDeploy:
                 return CompletedProcess(args, 12, stdout='bad stdout\n', stderr='bad stderr\n')
             return CompletedProcess(args, 0, stdout='', stderr='')
 
-        monkeypatch.setattr('lexe.deploy.date', FakeDate)
-        monkeypatch.setattr('lexe.deploy.sub_run', fake_sub_run)
-
         with (
+            patch('lexe.deploy.date', FakeDate),
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
             patch(
                 'lexe.deploy.docker_host_url',
                 return_value=nullcontext('ssh://hello-vm.exe.xyz'),

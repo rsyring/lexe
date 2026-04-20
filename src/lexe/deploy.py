@@ -44,6 +44,7 @@ class Deploy:
         self.ensure_required_files()
         dirty = self.is_dirty_worktree()
         self.ensure_dirty_allowed(dirty)
+        deploy_service_names = self.deploy_service_names()
         image_ref = self.image_ref(dirty)
 
         with (
@@ -71,7 +72,7 @@ class Deploy:
 
             self.run_hooks(
                 'pre-start',
-                self.service_hooks('start_pre'),
+                self.service_hooks('start_pre', deploy_service_names),
                 compose_env,
                 abort_on_failure=True,
             )
@@ -87,13 +88,14 @@ class Deploy:
                 str(self.wait_timeout_seconds),
                 '--force-recreate',
                 '--remove-orphans',
+                *deploy_service_names,
                 cwd=self.app_dpath,
                 env=compose_env,
             )
 
             self.run_hooks(
                 'post-start',
-                self.service_hooks('start_post'),
+                self.service_hooks('start_post', deploy_service_names),
                 compose_env,
                 abort_on_failure=False,
             )
@@ -156,11 +158,29 @@ class Deploy:
         }
         return env
 
-    def service_hooks(self, attr_name: str) -> list[tuple[str, HookCommand]]:
+    def deploy_service_names(self) -> tuple[str, ...]:
+        service_names = tuple(
+            service_name
+            for service_name, service in self.config.services.items()
+            if service.deploy == 'always'
+        )
+        if service_names:
+            return service_names
+
+        raise click.ClickException(
+            'No services are configured for direct deploy. Mark at least one service with '
+            'deploy: always.',
+        )
+
+    def service_hooks(
+        self,
+        attr_name: str,
+        service_names: tuple[str, ...],
+    ) -> list[tuple[str, HookCommand]]:
         return [
             (service_name, hook_command)
-            for service_name, service in self.config.services.items()
-            for hook_command in getattr(service.hooks, attr_name)
+            for service_name in service_names
+            for hook_command in getattr(self.config.services[service_name].hooks, attr_name)
         ]
 
     def run_hooks(

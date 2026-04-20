@@ -1,5 +1,3 @@
 services:
   web:
     image: ${LEXE_IMAGE:-hello:dev}
-    build:
-      context: .

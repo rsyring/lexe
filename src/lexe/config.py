@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 import yaml
@@ -39,6 +39,7 @@ def find_lexe_fpath(start_at: Path) -> Path:
 
 
 HookCommand = str | list[str]
+DeployMode = Literal['always', 'contingent']
 
 
 def _normalize_hook_commands(value: object) -> list[HookCommand]:
@@ -86,7 +87,7 @@ class ServiceHooksConfig(LexeBaseModel):
 
 
 class ServiceConfig(LexeBaseModel):
-    deploy: str = 'always'
+    deploy: DeployMode = 'always'
     hooks: ServiceHooksConfig = Field(default_factory=ServiceHooksConfig)
 
     @model_validator(mode='before')

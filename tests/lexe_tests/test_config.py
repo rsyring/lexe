@@ -63,6 +63,24 @@ class TestLexeConfig:
         config = config_yaml('hooks2.yaml')
         assert config.hooks.deploy_pre == [['echo', 'foo']]
 
+    def test_service_deploy_mode_must_be_supported(self, tmp_path):
+        config_fpath = tmp_path / 'lexe.yaml'
+        config_fpath.write_text(
+            'project:\n'
+            '  name: demo\n'
+            '  vm-host: demo-vm\n'
+            'services:\n'
+            '  web:\n'
+            '    deploy: sometimes\n',
+        )
+
+        with pytest.raises(ConfigError) as raised:
+            LexeConfig.from_yaml(config_fpath)
+
+        assert raised.value.errors() == [
+            "services.web.deploy: Input should be 'always' or 'contingent'",
+        ]
+
     def test_project_required(self):
         with pytest.raises(ConfigError) as raised:
             config_yaml('project-missing.yaml')

@@ -64,6 +64,7 @@ class LexeBaseModel(BaseModel):
 
 
 class ProjectConfig(LexeBaseModel):
+    path: Path
     name: str
     vm_host: str = Field(alias='vm-host')
 
@@ -113,18 +114,18 @@ class LexeConfig(LexeBaseModel):
     hooks: DeployHooksConfig = Field(default_factory=DeployHooksConfig)
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, object]) -> Self:
-        try:
-            return cls.model_validate(payload)
-        except ValidationError as e:
-            raise ConfigError(e.errors()) from e
-
-    @classmethod
     def from_yaml(cls, yaml_fpath: Path) -> Self:
         config = yaml.safe_load(yaml_fpath.read_text()) or {}
         if not isinstance(config, dict):
             raise ValueError('lexe.yaml format is invalid, check docs for example config')
-        return cls.from_mapping(config)
+
+        if isinstance(config.get('project'), dict):
+            config['project']['path'] = yaml_fpath.parent
+
+        try:
+            return cls.model_validate(config)
+        except ValidationError as e:
+            raise ConfigError(e.errors()) from e
 
     @classmethod
     def find_lexe(cls, start_at: Path) -> Self:

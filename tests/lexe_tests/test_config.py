@@ -16,6 +16,7 @@ class TestLexeConfig:
     def test_basic(self):
         config = config_yaml('basic.yaml')
 
+        assert config.project.path == configs_dpath
         assert config.project.name == 'ncc1701d'
         assert config.project.vm_host == 'ncc1701d-starfleet'
 

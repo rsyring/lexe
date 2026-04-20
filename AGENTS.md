@@ -38,22 +38,6 @@ For integration tests against exe.dev VMs, use the dedicated key at `~/.ssh/id_l
 4. WHEN you load a document from the index, notify the user.
 
 
-# Specs
+# File paths prefer dashes
 
-Do not duplicate implementation details or exact commands into spec documents when the code is the
-source of truth. Keep specs focused on decisions, scope, open questions, and validation outcomes so
-they do not become stale mirrors of the implementation.
-
-
-# Python Style
-
-We want modern Python style with a preference for dataclasses and object oriented behaviors on those classes when warranted.
-
-Avoid creating a lot of top-level functions when the logic is associated with it's data and should be on the class.
-
-
-## Python pytest Tests
-
-- Tests should be pytest style and class based.  That is, tests should usually be methods on a test
-class, not top-level module functions.
-- Use `unittest.mock` instead of pytest's `monkeypatch` fixture
+Prefer dashes (`-`) in file paths and names instead of underscores.

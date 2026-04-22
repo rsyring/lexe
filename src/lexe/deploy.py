@@ -18,6 +18,7 @@ from lexe.procs import (
 class Deploy:
     config_opts: ConfigOpts
     allow_dirty: bool = False
+    restart_all: bool = False
     wait_timeout_seconds: int = 90
 
     @property
@@ -44,6 +45,7 @@ class Deploy:
         self.ensure_required_files()
         dirty = self.is_dirty_worktree()
         self.ensure_dirty_allowed(dirty)
+        contingent_service_names = self.contingent_service_names()
         deploy_service_names = self.deploy_service_names()
         image_ref = self.image_ref(dirty)
 
@@ -67,8 +69,16 @@ class Deploy:
                 image_ref,
                 self.remote_host,
                 cwd=self.app_dpath,
-                env=docker_pussh_env(self.opts),
+                env=(docker_pussh_env(self.opts) or {}) | docker_env,
             )
+
+            if contingent_service_names:
+                click.echo('Starting contingent services on remote VM...')
+                self.start_service_group(
+                    contingent_service_names,
+                    compose_env,
+                    recreate=self.restart_all,
+                )
 
             self.run_hooks(
                 'pre-start',
@@ -78,20 +88,7 @@ class Deploy:
             )
 
             click.echo('Starting services on remote VM...')
-            sub_run(
-                'docker',
-                *self.compose_args(),
-                'up',
-                '-d',
-                '--wait',
-                '--wait-timeout',
-                str(self.wait_timeout_seconds),
-                '--force-recreate',
-                '--remove-orphans',
-                *deploy_service_names,
-                cwd=self.app_dpath,
-                env=compose_env,
-            )
+            self.start_service_group(deploy_service_names, compose_env, recreate=True)
 
             self.run_hooks(
                 'post-start',
@@ -172,6 +169,36 @@ class Deploy:
             'deploy: always.',
         )
 
+    def contingent_service_names(self) -> tuple[str, ...]:
+        return tuple(
+            service_name
+            for service_name, service in self.config.services.items()
+            if service.deploy == 'contingent'
+        )
+
+    def start_service_group(
+        self,
+        service_names: tuple[str, ...],
+        compose_env: dict[str, str],
+        *,
+        recreate: bool,
+    ) -> None:
+        recreate_arg = '--force-recreate' if recreate else '--no-recreate'
+        sub_run(
+            'docker',
+            *self.compose_args(),
+            'up',
+            '-d',
+            '--wait',
+            '--wait-timeout',
+            str(self.wait_timeout_seconds),
+            recreate_arg,
+            '--remove-orphans',
+            *service_names,
+            cwd=self.app_dpath,
+            env=compose_env,
+        )
+
     def service_hooks(
         self,
         attr_name: str,
@@ -201,7 +228,6 @@ class Deploy:
                 *self.compose_args(),
                 'run',
                 '--rm',
-                '--no-deps',
                 '--env',
                 f'LEXE_HOOK_NAME={phase}',
                 *self.compose_run_args(service_name, hook_command),

@@ -77,7 +77,7 @@ class TestDeploy:
             ((('git', 'status', '--short')), {'capture': True, 'cwd': tmp_path}),
             ((('git', 'rev-parse', 'HEAD')), {'capture': True, 'cwd': tmp_path}),
             ((('docker', 'build', '-t', image_ref, '.')), {'cwd': tmp_path}),
-            ((('docker', 'pussh', image_ref, 'hello-vm.exe.xyz')), {'cwd': tmp_path, 'env': None}),
+            ((('docker', 'pussh', image_ref, 'hello-vm.exe.xyz')), {'cwd': tmp_path, 'env': {}}),
             (
                 (
                     (
@@ -126,7 +126,7 @@ class TestDeploy:
             'Deploy complete.\n'
         )
 
-    def test_run_targets_only_always_services(self, tmp_path):
+    def test_run_starts_contingent_services_before_always_services(self, tmp_path):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
             (tmp_path / name).write_text('x')
 
@@ -162,7 +162,33 @@ class TestDeploy:
                 ),
             ).run()
 
-        assert (
+        contingent_call = (
+            (
+                'docker',
+                'compose',
+                '-f',
+                'compose.yaml',
+                '-f',
+                'compose.server.yaml',
+                'up',
+                '-d',
+                '--wait',
+                '--wait-timeout',
+                '90',
+                '--no-recreate',
+                '--remove-orphans',
+                'db',
+            ),
+            {
+                'cwd': tmp_path,
+                'env': {
+                    'COMPOSE_PROJECT_NAME': 'hello',
+                    'DOCKER_HOST': 'ssh://hello-vm.exe.xyz',
+                    'LEXE_IMAGE': 'hello:v2026-04-19-abcdef1',
+                },
+            },
+        )
+        always_call = (
             (
                 'docker',
                 'compose',
@@ -179,6 +205,73 @@ class TestDeploy:
                 '--remove-orphans',
                 'web',
                 'schedule',
+            ),
+            {
+                'cwd': tmp_path,
+                'env': {
+                    'COMPOSE_PROJECT_NAME': 'hello',
+                    'DOCKER_HOST': 'ssh://hello-vm.exe.xyz',
+                    'LEXE_IMAGE': 'hello:v2026-04-19-abcdef1',
+                },
+            },
+        )
+
+        assert contingent_call in calls
+        assert always_call in calls
+        assert calls.index(contingent_call) < calls.index(always_call)
+
+    def test_run_restart_all_restarts_contingent_services(self, tmp_path):
+        for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
+            (tmp_path / name).write_text('x')
+
+        calls = []
+
+        def fake_sub_run(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args == ('git', 'status', '--short'):
+                return CompletedProcess(args, 0, stdout='', stderr='')
+            if args == ('git', 'rev-parse', 'HEAD'):
+                return CompletedProcess(args, 0, stdout='abcdef1234567890\n', stderr='')
+            if args[-1] == 'ps':
+                return CompletedProcess(args, 0, stdout='', stderr='')
+            return CompletedProcess(args, 0, stdout='', stderr='')
+
+        with (
+            patch('lexe.deploy.date', FakeDate),
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
+            patch(
+                'lexe.deploy.docker_host_url',
+                return_value=nullcontext('ssh://hello-vm.exe.xyz'),
+            ),
+            patch('lexe.deploy.docker_client_env', return_value=nullcontext({})),
+        ):
+            Deploy(
+                config_opts=make_config_opts(
+                    tmp_path,
+                    services={
+                        'db': {'deploy': 'contingent'},
+                        'web': {},
+                    },
+                ),
+                restart_all=True,
+            ).run()
+
+        assert (
+            (
+                'docker',
+                'compose',
+                '-f',
+                'compose.yaml',
+                '-f',
+                'compose.server.yaml',
+                'up',
+                '-d',
+                '--wait',
+                '--wait-timeout',
+                '90',
+                '--force-recreate',
+                '--remove-orphans',
+                'db',
             ),
             {
                 'cwd': tmp_path,
@@ -304,7 +397,10 @@ class TestDeploy:
             ),
             {
                 'cwd': tmp_path,
-                'env': {'SSH_STRICT_HOST_KEY_CHECKING': 'no'},
+                'env': {
+                    'PATH': '/tmp/test-bin',
+                    'SSH_STRICT_HOST_KEY_CHECKING': 'no',
+                },
             },
         )
 
@@ -357,7 +453,6 @@ class TestDeploy:
             'compose.server.yaml',
             'run',
             '--rm',
-            '--no-deps',
             '--env',
             'LEXE_HOOK_NAME=pre-start',
             '--entrypoint',
@@ -375,7 +470,6 @@ class TestDeploy:
             'compose.server.yaml',
             'run',
             '--rm',
-            '--no-deps',
             '--env',
             'LEXE_HOOK_NAME=post-start',
             '--entrypoint',

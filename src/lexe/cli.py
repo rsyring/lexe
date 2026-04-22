@@ -58,9 +58,10 @@ def destroy(config_opts: ConfigOpts) -> None:
 
 @main.command()
 @click.option('--allow-dirty', is_flag=True)
+@click.option('--restart-all', is_flag=True)
 @pass_config_opts
-def deploy(config_opts: ConfigOpts, allow_dirty: bool) -> None:
-    Deploy(config_opts, allow_dirty=allow_dirty).run()
+def deploy(config_opts: ConfigOpts, allow_dirty: bool, restart_all: bool) -> None:
+    Deploy(config_opts, allow_dirty=allow_dirty, restart_all=restart_all).run()
 
 
 @main.command()

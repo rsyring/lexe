@@ -63,9 +63,10 @@ class TestDeploy:
         seen = {}
 
         class FakeDeploy:
-            def __init__(self, config_opts, allow_dirty):
+            def __init__(self, config_opts, allow_dirty, restart_all):
                 seen['config_opts'] = config_opts
                 seen['allow_dirty'] = allow_dirty
+                seen['restart_all'] = restart_all
 
             def run(self):
                 seen['ran'] = True
@@ -74,7 +75,7 @@ class TestDeploy:
 
         result = CliRunner().invoke(
             main,
-            ['--config-fpath', str(config_fpath), 'deploy', '--allow-dirty'],
+            ['--config-fpath', str(config_fpath), 'deploy', '--allow-dirty', '--restart-all'],
         )
 
         assert result.exit_code == 0
@@ -83,6 +84,7 @@ class TestDeploy:
         assert seen['config_opts'].config.project.vm_host == 'demo-vm'
         assert seen['config_opts'].config.project.path == tmp_path
         assert seen['allow_dirty'] is True
+        assert seen['restart_all'] is True
 
 
 class TestStatus:

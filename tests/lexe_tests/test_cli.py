@@ -127,3 +127,34 @@ class TestStatus:
 
         assert result.exit_code != 0
         assert '--ssh-known-hosts-manage requires --ssh-host-key-check' in result.output
+
+
+class TestExec:
+    def test_command(self, tmp_path):
+        config_fpath = tmp_path / 'lexe.yaml'
+        config_fpath.write_text('project:\n  name: demo\n  vm-host: demo-vm\nservices:\n  web:\n')
+
+        seen = {}
+
+        class FakeExec:
+            def __init__(self, config_opts, command, tty):
+                seen['config_opts'] = config_opts
+                seen['command'] = command
+                seen['tty'] = tty
+
+            def run(self):
+                seen['ran'] = True
+
+        with patch.object(lexe.cli, 'Exec', FakeExec):
+            result = CliRunner().invoke(
+                main,
+                ['--config-fpath', str(config_fpath), 'exec', '--tty', 'bash', '-lc', 'echo hi'],
+            )
+
+        assert result.exit_code == 0
+        assert seen['ran'] is True
+        assert seen['config_opts'].config.project.name == 'demo'
+        assert seen['config_opts'].config.project.vm_host == 'demo-vm'
+        assert seen['config_opts'].config.project.path == tmp_path
+        assert seen['command'] == ('bash', '-lc', 'echo hi')
+        assert seen['tty'] is True

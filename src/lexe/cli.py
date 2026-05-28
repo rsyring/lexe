@@ -5,6 +5,7 @@ import click
 from lexe.config import CLIOpts, ConfigOpts, LexeConfig
 from lexe.deploy import Deploy
 from lexe.provision import Destroy, Provision
+from lexe.remote import Exec
 from lexe.status import Status
 
 
@@ -68,3 +69,11 @@ def deploy(config_opts: ConfigOpts, allow_dirty: bool, restart_all: bool) -> Non
 @pass_config_opts
 def status(config_opts: ConfigOpts) -> None:
     Status(config_opts).run()
+
+
+@main.command('exec', context_settings={'ignore_unknown_options': True})
+@click.option('--tty', is_flag=True)
+@click.argument('command', nargs=-1, type=click.UNPROCESSED, required=True)
+@pass_config_opts
+def exec_(config_opts: ConfigOpts, tty: bool, command: tuple[str, ...]) -> None:
+    Exec(config_opts, command=tuple(command), tty=tty).run()

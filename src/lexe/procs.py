@@ -3,7 +3,7 @@ from contextlib import contextmanager
 import logging
 from os import environ
 from pathlib import Path
-from shlex import quote
+from shlex import join, quote
 from shutil import which
 import subprocess
 from subprocess import CompletedProcess
@@ -223,7 +223,17 @@ def is_exe_dev_ssh_destination(arg: object) -> bool:
     return isinstance(arg, str) and (arg == 'exe.dev' or arg.endswith('.exe.xyz'))
 
 
-def ssh(*args, opts: CLIOpts | None = None, **kwargs):
-    if any(is_exe_dev_ssh_destination(arg) for arg in args):
+def ssh(
+    destination: str, *command: str | Path, opts: CLIOpts | None = None, tty: bool = False, **kwargs
+):
+    args: tuple[str | Path, ...] = (destination,)
+    if command:
+        args = (destination, join(str(arg) for arg in command))
+
+    if is_exe_dev_ssh_destination(destination):
         args = (*exe_dev_ssh_args(opts), *args)
+
+    if tty:
+        args = ('-t', *args)
+
     return sub_run('ssh', args=args, **kwargs)

@@ -39,7 +39,7 @@ def find_lexe_fpath(start_at: Path) -> Path:
 
 
 HookCommand = str | list[str]
-DeployMode = Literal['always', 'contingent']
+DeployMode = Literal['always', 'contingent', 'exclusive']
 
 
 def _normalize_hook_commands(value: object) -> list[HookCommand]:

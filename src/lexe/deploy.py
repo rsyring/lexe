@@ -46,7 +46,9 @@ class Deploy:
         dirty = self.is_dirty_worktree()
         self.ensure_dirty_allowed(dirty)
         contingent_service_names = self.contingent_service_names()
+        exclusive_service_names = self.exclusive_service_names()
         deploy_service_names = self.deploy_service_names()
+        pre_start_hooks = self.service_hooks('start_pre', deploy_service_names)
         image_ref = self.image_ref(dirty)
 
         with (
@@ -80,9 +82,13 @@ class Deploy:
                     recreate=self.restart_all,
                 )
 
+            if exclusive_service_names and pre_start_hooks:
+                click.echo('Stopping exclusive services on remote VM before pre-start hooks...')
+                self.stop_service_group(exclusive_service_names, compose_env)
+
             self.run_hooks(
                 'pre-start',
-                self.service_hooks('start_pre', deploy_service_names),
+                pre_start_hooks,
                 compose_env,
                 abort_on_failure=True,
             )
@@ -159,14 +165,14 @@ class Deploy:
         service_names = tuple(
             service_name
             for service_name, service in self.config.services.items()
-            if service.deploy == 'always'
+            if service.deploy in ('always', 'exclusive')
         )
         if service_names:
             return service_names
 
         raise click.ClickException(
             'No services are configured for direct deploy. Mark at least one service with '
-            'deploy: always.',
+            'deploy: always or deploy: exclusive.',
         )
 
     def contingent_service_names(self) -> tuple[str, ...]:
@@ -174,6 +180,13 @@ class Deploy:
             service_name
             for service_name, service in self.config.services.items()
             if service.deploy == 'contingent'
+        )
+
+    def exclusive_service_names(self) -> tuple[str, ...]:
+        return tuple(
+            service_name
+            for service_name, service in self.config.services.items()
+            if service.deploy == 'exclusive'
         )
 
     def start_service_group(
@@ -194,6 +207,20 @@ class Deploy:
             str(self.wait_timeout_seconds),
             recreate_arg,
             '--remove-orphans',
+            *service_names,
+            cwd=self.app_dpath,
+            env=compose_env,
+        )
+
+    def stop_service_group(
+        self,
+        service_names: tuple[str, ...],
+        compose_env: dict[str, str],
+    ) -> None:
+        sub_run(
+            'docker',
+            *self.compose_args(),
+            'stop',
             *service_names,
             cwd=self.app_dpath,
             env=compose_env,

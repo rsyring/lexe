@@ -78,8 +78,23 @@ class TestLexeConfig:
             LexeConfig.from_yaml(config_fpath)
 
         assert raised.value.errors() == [
-            "services.web.deploy: Input should be 'always' or 'contingent'",
+            "services.web.deploy: Input should be 'always', 'contingent' or 'exclusive'",
         ]
+
+    def test_service_deploy_mode_accepts_exclusive(self, tmp_path):
+        config_fpath = tmp_path / 'lexe.yaml'
+        config_fpath.write_text(
+            'project:\n'
+            '  name: demo\n'
+            '  vm-host: demo-vm\n'
+            'services:\n'
+            '  web:\n'
+            '    deploy: exclusive\n',
+        )
+
+        config = LexeConfig.from_yaml(config_fpath)
+
+        assert config.services['web'].deploy == 'exclusive'
 
     def test_project_required(self):
         with pytest.raises(ConfigError) as raised:

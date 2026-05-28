@@ -1,6 +1,22 @@
 # lexe
 [![nox](https://github.com/level12/lexe/actions/workflows/nox.yaml/badge.svg)](https://github.com/level12/lexe/actions/workflows/nox.yaml)
 
+## Deploy modes
+
+Services support three deploy modes via `services.<name>.deploy`:
+
+- `always`: normal app services. They are part of the main deploy group and are recreated on each
+  deploy.
+- `contingent`: dependency services that should be available for deploy hooks and app startup, but
+  are not normally recreated unless `--restart-all` is used.
+- `exclusive`: app services that are part of the main deploy group, but should be stopped before
+  `start-pre` hooks run.
+
+Use `exclusive` when `start-pre` needs a short maintenance window, especially for destructive or
+connection-sensitive database tasks such as dropping and recreating a database before reseeding it.
+That lets `lexe` stop the existing service first, run the pre-start hooks without live app
+connections, and then start the service again.
+
 ## Dev
 
 

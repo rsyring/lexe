@@ -220,6 +220,96 @@ class TestDeploy:
         assert always_call in calls
         assert calls.index(contingent_call) < calls.index(always_call)
 
+    def test_run_stops_exclusive_services_before_pre_start_hooks(self, tmp_path):
+        for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
+            (tmp_path / name).write_text('x')
+
+        calls = []
+
+        def fake_sub_run(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args == ('git', 'status', '--short'):
+                return CompletedProcess(args, 0, stdout='', stderr='')
+            if args == ('git', 'rev-parse', 'HEAD'):
+                return CompletedProcess(args, 0, stdout='abcdef1234567890\n', stderr='')
+            if args[-1] == 'ps':
+                return CompletedProcess(args, 0, stdout='', stderr='')
+            return CompletedProcess(args, 0, stdout='', stderr='')
+
+        with (
+            patch('lexe.deploy.date', FakeDate),
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
+            patch(
+                'lexe.deploy.docker_host_url',
+                return_value=nullcontext('ssh://hello-vm.exe.xyz'),
+            ),
+            patch('lexe.deploy.docker_client_env', return_value=nullcontext({})),
+        ):
+            Deploy(
+                config_opts=make_config_opts(
+                    tmp_path,
+                    services={
+                        'db': {'deploy': 'contingent'},
+                        'web': {'deploy': 'exclusive'},
+                        'worker': {'hooks': {'start-pre': 'echo pre'}},
+                    },
+                ),
+            ).run()
+
+        stop_call = (
+            (
+                'docker',
+                'compose',
+                '-f',
+                'compose.yaml',
+                '-f',
+                'compose.server.yaml',
+                'stop',
+                'web',
+            ),
+            {
+                'cwd': tmp_path,
+                'env': {
+                    'COMPOSE_PROJECT_NAME': 'hello',
+                    'DOCKER_HOST': 'ssh://hello-vm.exe.xyz',
+                    'LEXE_IMAGE': 'hello:v2026-04-19-abcdef1',
+                },
+            },
+        )
+        hook_call = (
+            (
+                'docker',
+                'compose',
+                '-f',
+                'compose.yaml',
+                '-f',
+                'compose.server.yaml',
+                'run',
+                '--rm',
+                '--env',
+                'LEXE_HOOK_NAME=pre-start',
+                '--entrypoint',
+                'sh',
+                'worker',
+                '-lc',
+                'echo pre',
+            ),
+            {
+                'cwd': tmp_path,
+                'env': {
+                    'COMPOSE_PROJECT_NAME': 'hello',
+                    'DOCKER_HOST': 'ssh://hello-vm.exe.xyz',
+                    'LEXE_IMAGE': 'hello:v2026-04-19-abcdef1',
+                },
+                'capture': True,
+                'check': True,
+            },
+        )
+
+        assert stop_call in calls
+        assert hook_call in calls
+        assert calls.index(stop_call) < calls.index(hook_call)
+
     def test_run_restart_all_restarts_contingent_services(self, tmp_path):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
             (tmp_path / name).write_text('x')
@@ -317,6 +407,65 @@ class TestDeploy:
                     services={'db': {'deploy': 'contingent'}},
                 ),
             ).run()
+
+    def test_run_accepts_exclusive_service_as_direct_deploy_target(self, tmp_path):
+        for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):
+            (tmp_path / name).write_text('x')
+
+        calls = []
+
+        def fake_sub_run(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args == ('git', 'status', '--short'):
+                return CompletedProcess(args, 0, stdout='', stderr='')
+            if args == ('git', 'rev-parse', 'HEAD'):
+                return CompletedProcess(args, 0, stdout='abcdef1234567890\n', stderr='')
+            if args[-1] == 'ps':
+                return CompletedProcess(args, 0, stdout='', stderr='')
+            return CompletedProcess(args, 0, stdout='', stderr='')
+
+        with (
+            patch('lexe.deploy.date', FakeDate),
+            patch('lexe.deploy.sub_run', side_effect=fake_sub_run),
+            patch(
+                'lexe.deploy.docker_host_url',
+                return_value=nullcontext('ssh://hello-vm.exe.xyz'),
+            ),
+            patch('lexe.deploy.docker_client_env', return_value=nullcontext({})),
+        ):
+            Deploy(
+                config_opts=make_config_opts(
+                    tmp_path,
+                    services={'web': {'deploy': 'exclusive'}},
+                ),
+            ).run()
+
+        assert (
+            (
+                'docker',
+                'compose',
+                '-f',
+                'compose.yaml',
+                '-f',
+                'compose.server.yaml',
+                'up',
+                '-d',
+                '--wait',
+                '--wait-timeout',
+                '90',
+                '--force-recreate',
+                '--remove-orphans',
+                'web',
+            ),
+            {
+                'cwd': tmp_path,
+                'env': {
+                    'COMPOSE_PROJECT_NAME': 'hello',
+                    'DOCKER_HOST': 'ssh://hello-vm.exe.xyz',
+                    'LEXE_IMAGE': 'hello:v2026-04-19-abcdef1',
+                },
+            },
+        ) in calls
 
     def test_run_appends_dirty_suffix_when_allowed(self, tmp_path, capsys):
         for name in ('Dockerfile', 'compose.yaml', 'compose.server.yaml'):

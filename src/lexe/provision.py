@@ -23,6 +23,17 @@ class ExeDev:
     wait_timeout_seconds: int = 120
     wait_interval_seconds: int = 2
 
+    def host_ssh_failure_message(self, vm_name: str, command: tuple[str, ...], result) -> str:
+        message = [
+            f'Command failed on {vm_name!r} with exit code {result.returncode}: '
+            + ' '.join(command),
+        ]
+        if stdout := (result.stdout or '').strip():
+            message.append(f'STDOUT: {stdout}')
+        if stderr := (result.stderr or '').strip():
+            message.append(f'STDERR: {stderr}')
+        return '\n'.join(message)
+
     def list_vms(self) -> dict[str, ExeDevVm]:
         result = ssh('exe.dev', 'ls', '--json', capture=True, opts=self.opts)
         payload = json.loads(result.stdout)
@@ -74,20 +85,29 @@ class ExeDev:
 
         raise click.ClickException(f'Timed out waiting for Docker availability on {vm_name!r}.')
 
-    def daemon_config(self, vm_name: str) -> dict:
-        result = self.host_ssh(
+    def docker_driver_status(self, vm_name: str, *, check: bool):
+        return self.host_ssh(
             vm_name,
-            'sudo',
-            'cat',
-            '/etc/docker/daemon.json',
+            'docker',
+            'info',
+            '--format',
+            '{{.DriverStatus}}',
             capture=True,
-            check=False,
+            check=check,
         )
+
+    def containerd_image_store_enabled(self, vm_name: str) -> bool:
+        result = self.docker_driver_status(vm_name, check=False)
+        return result.returncode == 0 and CONTAINERD_SNAPSHOTTER_STATUS in result.stdout
+
+    def daemon_config(self, vm_name: str) -> dict:
+        command = ('sudo', 'cat', '/etc/docker/daemon.json')
+        result = self.host_ssh(vm_name, *command, capture=True, check=False)
         if result.returncode == 0:
             return json.loads(result.stdout)
         if 'No such file or directory' in result.stderr:
             return {}
-        raise click.ClickException(result.stderr.strip() or result.stdout.strip())
+        raise click.ClickException(self.host_ssh_failure_message(vm_name, command, result))
 
     def desired_daemon_config(self, current_config: dict) -> dict:
         features = current_config.get('features') or {}
@@ -106,6 +126,9 @@ class ExeDev:
         )
 
     def ensure_containerd_image_store(self, vm_name: str) -> bool:
+        if self.containerd_image_store_enabled(vm_name):
+            return False
+
         current_config = self.daemon_config(vm_name)
         desired_config = self.desired_daemon_config(current_config)
         if current_config == desired_config:
@@ -124,17 +147,15 @@ class ExeDev:
         return True
 
     def verify_containerd_image_store(self, vm_name: str) -> None:
-        result = self.host_ssh(
-            vm_name,
-            'docker',
-            'info',
-            '--format',
-            '{{.DriverStatus}}',
-            capture=True,
-        )
+        command = ('docker', 'info', '--format', '{{.DriverStatus}}')
+        result = self.host_ssh(vm_name, *command, capture=True, check=False)
+        if result.returncode != 0:
+            raise click.ClickException(self.host_ssh_failure_message(vm_name, command, result))
         if CONTAINERD_SNAPSHOTTER_STATUS not in result.stdout:
+            driver_status = result.stdout.strip() or '<empty>'
             raise click.ClickException(
-                f'Docker on {vm_name!r} is not using the containerd image store.',
+                f'Docker on {vm_name!r} is not using the containerd image store.\n'
+                f'DriverStatus: {driver_status}',
             )
 
     def make_public(self, vm_name: str) -> None:

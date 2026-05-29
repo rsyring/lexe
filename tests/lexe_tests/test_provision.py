@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from subprocess import CompletedProcess
+from unittest.mock import patch
+
+import click
+import pytest
 
 from lexe.config import CLIOpts, ConfigOpts, LexeConfig
 from lexe.provision import Destroy, ExeDev, Provision
@@ -196,11 +200,13 @@ class TestExeDev:
             call[1] == {'capture': True, 'check': False, 'opts': CLIOpts()} for call in calls
         )
 
-    def test_ensure_containerd_image_store_restarts_docker_when_changed(self, monkeypatch):
+    def test_ensure_containerd_image_store_restarts_docker_when_changed(self):
         calls = []
 
         def fake_ssh(*args, **kwargs):
             calls.append((args, kwargs))
+            if args[-4:] == ('docker', 'info', '--format', '{{.DriverStatus}}'):
+                return CompletedProcess(args, 0, stdout='[]', stderr='')
             if args[-3:] == ('sudo', 'cat', '/etc/docker/daemon.json'):
                 return CompletedProcess(
                     args,
@@ -210,10 +216,20 @@ class TestExeDev:
                 )
             return CompletedProcess(args, 0, stdout='', stderr='')
 
-        monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
+        with patch('lexe.provision.ssh', side_effect=fake_ssh):
+            assert ExeDev().ensure_containerd_image_store('demo-vm')
 
-        assert ExeDev().ensure_containerd_image_store('demo-vm')
         assert calls[0] == (
+            (
+                'demo-vm.exe.xyz',
+                'docker',
+                'info',
+                '--format',
+                '{{.DriverStatus}}',
+            ),
+            {'capture': True, 'check': False, 'opts': CLIOpts()},
+        )
+        assert calls[1] == (
             (
                 'demo-vm.exe.xyz',
                 'sudo',
@@ -222,7 +238,7 @@ class TestExeDev:
             ),
             {'capture': True, 'check': False, 'opts': CLIOpts()},
         )
-        assert calls[1] == (
+        assert calls[2] == (
             (
                 'demo-vm.exe.xyz',
                 'sudo',
@@ -232,7 +248,7 @@ class TestExeDev:
             ),
             {'opts': CLIOpts()},
         )
-        assert calls[2] == (
+        assert calls[3] == (
             (
                 'demo-vm.exe.xyz',
                 'sudo',
@@ -245,7 +261,7 @@ class TestExeDev:
                 'opts': CLIOpts(),
             },
         )
-        assert calls[3] == (
+        assert calls[4] == (
             (
                 'demo-vm.exe.xyz',
                 'sudo',
@@ -256,11 +272,13 @@ class TestExeDev:
             {'capture': True, 'opts': CLIOpts()},
         )
 
-    def test_ensure_containerd_image_store_merges_existing_daemon_config(self, monkeypatch):
+    def test_ensure_containerd_image_store_merges_existing_daemon_config(self):
         calls = []
 
         def fake_ssh(*args, **kwargs):
             calls.append((args, kwargs))
+            if args[-4:] == ('docker', 'info', '--format', '{{.DriverStatus}}'):
+                return CompletedProcess(args, 0, stdout='[]', stderr='')
             if args[-3:] == ('sudo', 'cat', '/etc/docker/daemon.json'):
                 return CompletedProcess(
                     args,
@@ -270,10 +288,10 @@ class TestExeDev:
                 )
             return CompletedProcess(args, 0, stdout='', stderr='')
 
-        monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
+        with patch('lexe.provision.ssh', side_effect=fake_ssh):
+            assert ExeDev().ensure_containerd_image_store('demo-vm')
 
-        assert ExeDev().ensure_containerd_image_store('demo-vm')
-        assert calls[2] == (
+        assert calls[3] == (
             (
                 'demo-vm.exe.xyz',
                 'sudo',
@@ -298,11 +316,13 @@ class TestExeDev:
             },
         )
 
-    def test_ensure_containerd_image_store_is_noop_when_unchanged(self, monkeypatch):
+    def test_ensure_containerd_image_store_is_noop_when_unchanged(self):
         calls = []
 
         def fake_ssh(*args, **kwargs):
             calls.append((args, kwargs))
+            if args[-4:] == ('docker', 'info', '--format', '{{.DriverStatus}}'):
+                return CompletedProcess(args, 0, stdout='[]', stderr='')
             return CompletedProcess(
                 args,
                 0,
@@ -310,10 +330,20 @@ class TestExeDev:
                 stderr='',
             )
 
-        monkeypatch.setattr('lexe.provision.ssh', fake_ssh)
+        with patch('lexe.provision.ssh', side_effect=fake_ssh):
+            assert ExeDev().ensure_containerd_image_store('demo-vm') is False
 
-        assert ExeDev().ensure_containerd_image_store('demo-vm') is False
         assert calls == [
+            (
+                (
+                    'demo-vm.exe.xyz',
+                    'docker',
+                    'info',
+                    '--format',
+                    '{{.DriverStatus}}',
+                ),
+                {'capture': True, 'check': False, 'opts': CLIOpts()},
+            ),
             (
                 (
                     'demo-vm.exe.xyz',
@@ -324,6 +354,53 @@ class TestExeDev:
                 {'capture': True, 'check': False, 'opts': CLIOpts()},
             ),
         ]
+
+    def test_ensure_containerd_image_store_skips_config_when_runtime_is_ready(self):
+        calls = []
+
+        def fake_ssh(*args, **kwargs):
+            calls.append((args, kwargs))
+            return CompletedProcess(
+                args,
+                0,
+                stdout='[["driver-type","io.containerd.snapshotter.v1"]]',
+                stderr='',
+            )
+
+        with patch('lexe.provision.ssh', side_effect=fake_ssh):
+            assert ExeDev().ensure_containerd_image_store('demo-vm') is False
+
+        assert calls == [
+            (
+                (
+                    'demo-vm.exe.xyz',
+                    'docker',
+                    'info',
+                    '--format',
+                    '{{.DriverStatus}}',
+                ),
+                {'capture': True, 'check': False, 'opts': CLIOpts()},
+            ),
+        ]
+
+    def test_daemon_config_reports_empty_failures(self):
+        with (
+            patch(
+                'lexe.provision.ssh',
+                return_value=CompletedProcess(
+                    ('ssh',),
+                    1,
+                    stdout='',
+                    stderr='',
+                ),
+            ),
+            pytest.raises(click.ClickException) as exc_info,
+        ):
+            ExeDev().daemon_config('demo-vm')
+
+        message = str(exc_info.value)
+        assert 'exit code 1' in message
+        assert 'sudo cat /etc/docker/daemon.json' in message
 
     def test_verify_containerd_image_store(self, monkeypatch):
         calls = []
@@ -349,7 +426,7 @@ class TestExeDev:
                     '--format',
                     '{{.DriverStatus}}',
                 ),
-                {'capture': True, 'opts': CLIOpts()},
+                {'capture': True, 'check': False, 'opts': CLIOpts()},
             ),
         ]
 

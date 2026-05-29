@@ -1,0 +1,76 @@
+# Example lexe config showing every supported config field.
+#
+# Copy this file into an app repo as `lexe.yaml`, then trim it down to only the
+# sections you actually need.
+
+project:
+  # Used as the Docker image name prefix and as COMPOSE_PROJECT_NAME.
+  # That influences the image tag lexe builds and the compose-managed
+  # container/network/volume names on the remote VM.
+  name: example-app
+
+  # Controls the exe.dev VM name and SSH target.
+  # Commands like `lexe provision`, `lexe deploy`, `lexe status`, and remote
+  # exec all target this VM.
+  vm-host: lexe-example-app
+
+# Include `public` when this app should be reachable over HTTP from the public
+# internet. Its presence makes `lexe provision` enable exe.dev's public proxy
+# for this VM.
+public:
+  # Keep this aligned with the port your public service exposes in compose.
+  # This value is currently parsed/validated but is not read by the CLI yet.
+  port: 8000
+
+  # `lexe status` checks this URL and reports healthy/unhealthy/error.
+  # Point it at a lightweight endpoint served by your public app.
+  healthcheck-url: https://lexe-example-app.exe.xyz/health
+
+services:
+  # `always` services are the main deploy targets.
+  # They are started on every deploy and recreated each time.
+  web:
+    deploy: always
+    hooks:
+      # Runs before deploy services start. A non-zero exit aborts the deploy.
+      # A single string runs via `sh -lc ...` inside an ephemeral container for
+      # this service.
+      start-pre: python manage.py migrate
+
+      # Runs after services start. Failures are reported but do not abort the
+      # deploy. A YAML list of strings runs multiple hook commands in order.
+      start-post:
+        - python hooks/log-event.py
+        - python hooks/warm-cache.py
+
+  # `contingent` services are supporting dependencies such as Redis or a DB.
+  # They are started before the main deploy when needed, but are not normally
+  # force-recreated unless you deploy with `--restart-all`.
+  redis:
+    deploy: contingent
+
+  # `exclusive` services are part of the deploy set, but lexe stops exclusive
+  # services before any pre-start hooks run, then starts them again afterward.
+  # Use this when your hook needs the service to be down first.
+  worker:
+    deploy: exclusive
+    hooks:
+      # A list of argv arrays avoids shell quoting issues because each inner
+      # list is passed as command + args directly.
+      start-pre:
+        - [python, hooks/drain-queues.py]
+      start-post:
+        - [python, hooks/log-event.py, worker-started]
+
+# Deploy-wide hooks are accepted by the config parser.
+# They describe once-per-deploy hooks, but the current deploy implementation
+# does not execute them yet.
+hooks:
+  # Intended to run once before the deploy as a whole.
+  # Currently parsed and validated, but unused at runtime.
+  deploy-pre: python hooks/log-event.py
+
+  # Intended to run once after the deploy as a whole.
+  # This example uses argv form to show the other supported hook syntax.
+  deploy-post:
+    - [python, hooks/log-event.py, deploy-finished]
